@@ -1,0 +1,385 @@
+This module must integrate OpenTelemetry concepts into the existing Predictive Observability Platform and demonstrate vendor-neutral, AI-ready observability architecture.
+
+The goal is to simulate an OpenTelemetry-based telemetry pipeline that:
+
+• Ingests metrics, traces, and logs
+• Routes through an OpenTelemetry Collector layer
+• Supports multiple backend exporters (AppDynamics, Prometheus, Data Lake mock)
+• Enables AI-driven causal and predictive insights
+• Provides persona-based dashboards
+
+⸻
+
+🧱 TECH STACK
+
+Frontend:
+	•	React (Vite)
+	•	Tailwind CSS
+	•	Recharts
+	•	Axios
+
+Backend:
+	•	Node.js
+	•	Express
+	•	dotenv
+	•	In-memory storage
+	•	Optional SQLite
+	•	Mock OpenTelemetry collector simulation layer
+
+AI Layer (Prototype):
+	•	Rule-based causal engine
+	•	Anomaly detection (statistical threshold + deviation)
+	•	Service risk scoring
+	•	Capacity forecasting (linear regression)
+	•	Knowledge graph mock
+
+⸻
+
+🏗 ARCHITECTURE REQUIREMENTS
+
+Simulate this OpenTelemetry Architecture:
+
+Data Sources:
+	•	Microservices (mock JSON generators)
+	•	Infrastructure metrics (CPU, Memory, Disk)
+	•	Application logs
+	•	Business KPIs (Revenue, Orders, Transactions)
+
+Telemetry Types:
+	•	Metrics
+	•	Traces
+	•	Logs
+
+Create a simulated OTEL Collector service that:
+	•	Accepts telemetry via mock OTLP endpoint
+	•	Processes via:
+	•	Batch processor
+	•	Sampling processor
+	•	Attribute enrichment
+	•	Exports to:
+	•	Commercial APM (mock AppDynamics)
+	•	OSS backend (mock Prometheus/Jaeger)
+	•	Data Lake (mock S3/Snowflake)
+
+Structure:
+
+/server
+/otel
+collector.js
+receivers.js
+processors.js
+exporters.js
+/ai
+anomaly.engine.js
+causal.engine.js
+forecasting.engine.js
+recommendation.engine.js
+risk.engine.js
+
+⸻
+
+👤 USER JOURNEY
+
+1️⃣ OpenTelemetry Overview Page
+
+Route: /otel
+
+Display:
+	•	Executive Summary
+	•	What is OpenTelemetry
+	•	Vendor-neutral architecture explanation
+	•	Business benefits:
+	•	Lower TCO
+	•	Reduced vendor lock-in
+	•	AI-ready data foundation
+	•	Standardized telemetry
+
+Show architecture diagram (visual layout component).
+
+⸻
+
+2️⃣ Telemetry Flow Dashboard
+
+Route: /otel/flow
+
+Visual pipeline:
+
+Microservices → OTEL Collector → Processors → Exporters → Backends
+
+Display:
+	•	Live telemetry ingestion counter
+	•	Metrics/sec
+	•	Logs/sec
+	•	Traces/sec
+	•	Data filtered %
+	•	Export distribution %
+
+Allow toggle:
+	•	“Proprietary Agent Mode”
+	•	“OpenTelemetry Mode”
+
+When proprietary mode selected:
+Simulate:
+	•	Higher ingestion cost
+	•	Vendor lock-in warning
+	•	No filtering
+	•	No multi-export
+
+⸻
+
+3️⃣ Persona-Based Views
+
+🧑‍💼 Business Leader View
+
+Route: /persona/business
+
+Dashboard must show:
+
+Business KPIs:
+	•	Order volume
+	•	Revenue trend
+	•	Conversion rate
+	•	SLA health
+	•	Revenue impact from incidents
+
+Include:
+	•	Unified decision view
+	•	Risk heatmap
+	•	Service health score
+
+Show:
+Projected SLA breach risk
+
+⸻
+
+🧑‍💻 SRE / Service Owner View
+
+Route: /persona/sre
+
+Display:
+
+Service-level KPIs:
+	•	Uptime
+	•	Latency
+	•	Error rate
+	•	Error budget burn
+	•	Transaction hotspots
+
+Enable drilldown:
+Portfolio → Application → Service → Node → Infrastructure
+
+Include:
+	•	Top degrading services
+	•	Risk-ranked services
+	•	Incident correlation view
+
+⸻
+
+4️⃣ Runtime Deep Observability
+
+Route: /runtime/:service
+
+Simulate:
+
+.NET / JVM runtime metrics:
+	•	GC time
+	•	Heap usage
+	•	Thread pool
+	•	CPU
+	•	Exception rate
+
+Include anomaly detection:
+Highlight spikes in red.
+
+Show AI Insight summary:
+“High GC pause detected. Recommend JVM heap tuning.”
+
+⸻
+
+5️⃣ Causal & Predictive AI Module
+
+Route: /ai/insights
+
+Implement:
+
+Causal Engine
+	•	Correlate CPU spike + latency spike + DB response time
+	•	Generate root cause hypothesis
+	•	Rank likely root causes
+	•	Show confidence %
+
+Knowledge Graph (Mock)
+
+Display service dependency graph:
+	•	API → Service → DB → Infra
+
+Highlight failing node.
+
+⸻
+
+Predictive Engine
+
+Forecast next:
+	•	72 hours CPU
+	•	72 hours response time
+	•	Error trend
+
+Show:
+Confidence bands
+
+If projected SLA breach:
+Display:
+“High probability of performance degradation in next 6 hours.”
+
+⸻
+
+6️⃣ Capacity Planning
+
+Route: /capacity
+
+Calculate:
+	•	Growth rate
+	•	Peak utilization
+	•	Saturation forecast date
+	•	Scaling recommendation
+
+Show:
+“Recommended: Add 2 pods within 5 days.”
+
+⸻
+
+7️⃣ Automation & Self-Healing Simulation
+
+Route: /automation
+
+Simulate:
+
+Incident occurs →
+Send contextual data →
+Trigger mock Ansible/Terraform script →
+Auto-remediation executed →
+Event auto-closed →
+ITSM ticket updated
+
+Display step-by-step timeline.
+
+⸻
+
+🚨 INCIDENT INTELLIGENCE (Enhanced)
+
+Enhance incident grouping using:
+	•	Timestamp clustering
+	•	Same service
+	•	Similar error signature
+	•	Similar stack trace (mock similarity scoring)
+
+Each incident should show:
+	•	Severity
+	•	Duration
+	•	Impacted transactions
+	•	Business impact score
+	•	AI summary
+
+⸻
+
+📊 PERFORMANCE MATURITY VIEW
+
+Route: /maturity
+
+Display 5 levels:
+
+Level 1: Vanilla Deployment
+Level 2: Reactive
+Level 3: Active Operational
+Level 4: Proactive
+Level 5: Dynamic Business-driven
+
+Highlight current simulated maturity level.
+
+Show transformation path to Level 5 (AI-driven AIOps).
+
+⸻
+
+💰 COST SIMULATION PANEL
+
+Route: /cost-analysis
+
+Compare:
+
+Proprietary Agent Model vs OpenTelemetry Model
+
+Simulate:
+	•	Data ingestion cost
+	•	Vendor switch cost
+	•	Historical data loss risk
+	•	Filtering efficiency
+
+Display:
+Projected 30%–40% TCO reduction using OpenTelemetry.
+
+⸻
+
+🧠 AI REQUIREMENTS
+
+Implement rule-based engine:
+
+Examples:
+
+IF CPU > 85% for 10 minutes
+→ Recommend horizontal scaling
+
+IF GC > threshold
+→ Recommend heap tuning
+
+IF DB latency spike + error spike
+→ Recommend query optimization
+
+Generate:
+	•	Confidence score
+	•	Estimated impact reduction
+	•	Suggested action steps
+
+⸻
+
+🎨 UI REQUIREMENTS
+
+Enterprise look:
+	•	Sidebar navigation
+	•	Dark/light theme toggle
+	•	Status colors:
+Green = Healthy
+Yellow = Warning
+Red = Critical
+
+Use:
+	•	Clean cards
+	•	Trend charts
+	•	Risk indicators
+	•	Executive summary panels
+
+⸻
+
+🧪 MOCK MODE (MANDATORY)
+
+If no real telemetry source:
+
+Auto-generate:
+	•	Synthetic metrics
+	•	Synthetic traces
+	•	Synthetic logs
+	•	Simulated anomalies
+
+Allow full UI demo without external dependencies.
+
+⸻
+
+📈 TARGET OUTCOME
+
+The finished prototype must:
+
+✔ Demonstrate vendor-neutral observability
+✔ Show business + technical unified visibility
+✔ Include AI-driven causal and predictive insights
+✔ Simulate automation and self-healing
+✔ Present clear value for business leaders and SRE teams
+✔ Position platform as future-ready AIOps foundation

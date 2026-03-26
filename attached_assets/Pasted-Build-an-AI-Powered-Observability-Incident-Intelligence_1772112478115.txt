@@ -1,0 +1,272 @@
+Build an AI-Powered Observability & Incident Intelligence Platform Prototype
+Build a full-stack prototype web application called:
+Predictive Observability Platform
+The goal is to integrate with AppDynamics Controller APIs, fetch application-level and infrastructure-level telemetry data, and provide:
+Application dashboards
+Infrastructure dashboards
+Incident grouping
+Problem detail drilldowns
+Root cause views
+AI-driven recommendations
+Predictive forecasting placeholders
+🧱 TECH STACK
+Use:
+Frontend:
+React (Vite)
+Tailwind CSS
+Recharts (for graphs)
+Axios
+Backend:
+Node.js
+Express
+Axios
+dotenv
+Simple in-memory cache
+Optional: SQLite for persistence
+Authentication:
+Basic Auth to AppDynamics Controller API
+AI Layer (Prototype):
+Rule-based engine for:
+Incident grouping
+Similarity clustering
+Recommendation engine
+Add placeholder for future ML integration
+👤 USER JOURNEY
+1️⃣ Landing Page – Controller Integration
+Page: /
+Show form:
+Controller URL
+Account name
+Username
+Password (or API client credentials)
+Connect button
+On submit:
+Call backend /api/connect
+Backend stores credentials in memory
+Validate connection using:
+GET /controller/rest/applications
+If success:
+Redirect to /applications
+2️⃣ Applications Page
+Page: /applications
+Backend endpoint:
+GET /controller/rest/applications
+Display:
+List of applications
+Search bar
+Status indicator (Healthy / Warning / Critical)
+Clicking application → /applications/:id
+3️⃣ Application Dashboard Page
+Page: /applications/:id
+This page has 2 Tabs:
+TAB 1: Application Dashboard
+Fetch:
+Business Transactions
+Average response time
+Calls per minute
+Error rate
+Slow transactions
+Health rule violations
+Events
+Use APIs:
+/controller/rest/business-transactions
+/controller/rest/metric-data
+/controller/rest/events
+/controller/rest/problems
+Display:
+📊 Graphs:
+Response Time (time series)
+Error rate
+Throughput
+Apdex
+📌 Sections:
+Top 5 slow transactions
+Top error-producing transactions
+Health violations
+TAB 2: Infrastructure Dashboard
+Fetch:
+Nodes
+Tiers
+CPU usage
+Memory usage
+JVM metrics
+GC activity
+Disk I/O
+APIs:
+/controller/rest/nodes
+/controller/rest/metric-data
+Display:
+📊 Graphs:
+CPU %
+Memory %
+Heap usage
+GC time
+Show:
+Nodes in Critical
+High CPU Nodes
+High Memory Nodes
+🚨 INCIDENT MANAGEMENT FEATURE
+Create new section:
+/applications/:id/incidents
+Incident definition:
+Group problems by:
+Time proximity (within X minutes)
+Same tier
+Same node
+Similar root cause
+Similar stack trace (mock similarity)
+Backend logic:
+Fetch problems:
+/controller/rest/problems
+Group problems using:
+Timestamp clustering
+Tier matching
+Error type similarity
+Return grouped incidents:
+{
+  incidentId,
+  startTime,
+  severity,
+  affectedTiers,
+  relatedProblems: []
+}
+UI:
+Table of incidents
+Severity indicator
+Duration
+Impacted transactions
+Business impact score (mock)
+Click incident → /incidents/:id
+🔍 PROBLEM DETAIL PAGE
+Route:
+/problems/:id
+Fetch:
+Problem details
+Root cause
+Affected business transactions
+Affected nodes
+Performance metrics around event window
+Display sections:
+1. Problem Overview
+Severity
+Start time
+Duration
+Status
+Impacted users (mock calculation)
+2. Root Cause
+Tier
+Node
+Error message
+Exception class
+Slow call graph (mock visualization)
+3. Business Impact
+Transactions affected
+Revenue impact (mock)
+SLA breach indicator
+4. Performance Context
+Graphs:
+Response time before/during/after
+CPU before/during/after
+Error spike chart
+5. AI Recommendations
+Build rule-based recommendation engine:
+Example rules:
+IF CPU > 85% for 15 mins
+→ Recommend scaling tier horizontally
+IF GC time > threshold
+→ Recommend JVM tuning
+IF DB response time high
+→ Suggest query analysis
+IF thread contention detected
+→ Suggest thread pool tuning
+Display:
+Action recommendation
+Confidence score (mock)
+Estimated impact
+Suggested next step
+📈 PREDICTIVE & FORECASTING PLACEHOLDER
+Create route:
+/applications/:id/forecast
+Use last 24h metrics:
+Fit simple linear regression
+Forecast next 6 hours:
+Response time
+CPU usage
+Error rate
+Display:
+Forecast chart
+Risk prediction:
+"High probability of SLA breach in next 3 hours"
+Mark this section as:
+"AI Forecasting Prototype – Replace with ML model"
+🧠 CAPACITY PLANNING VIEW
+Route:
+/applications/:id/capacity
+Display:
+Peak vs average CPU
+Growth rate of traffic
+Projected saturation date
+Recommended scaling plan
+Use formula:
+Projected saturation =
+(Current growth trend) + (Current peak utilization)
+🏗 BACKEND STRUCTURE
+/server
+  server.js
+  routes/
+    connect.js
+    applications.js
+    metrics.js
+    problems.js
+    incidents.js
+  services/
+    appdynamics.service.js
+    incident.engine.js
+    recommendation.engine.js
+    forecasting.engine.js
+🔐 SECURITY
+Store credentials securely in memory
+Never expose password to frontend
+Use proxy pattern
+🎨 UI REQUIREMENTS
+Clean enterprise UI
+Sidebar navigation:
+Applications
+Incidents
+Forecasting
+Capacity Planning
+Status colors:
+Green = Healthy
+Yellow = Warning
+Red = Critical
+🧪 MOCK MODE (IMPORTANT)
+If AppDynamics credentials not provided:
+Use mocked JSON data
+Allow full UI navigation
+Add toggle:
+"Use Demo Mode"
+📦 DELIVERABLES
+Replit project must include:
+Running frontend + backend
+Working Controller integration
+Incident grouping logic
+Problem drilldown page
+Recommendation engine scaffold
+Forecasting mock
+Clean README explaining:
+How to connect AppDynamics
+How incident grouping works
+How recommendation logic works
+🎯 GOAL OF PROTOTYPE
+This platform should demonstrate:
+Predictive issue detection
+Incident intelligence
+Root cause insights
+Business impact correlation
+AI-driven recommendations
+Capacity planning visibility
+The architecture must allow easy future integration of:
+Machine Learning models
+Time series anomaly detection
+LLM-based RCA explanation
+Automated remediation workflows

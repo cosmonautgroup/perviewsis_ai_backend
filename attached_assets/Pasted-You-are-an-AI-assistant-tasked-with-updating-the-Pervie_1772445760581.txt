@@ -1,0 +1,88 @@
+You are an AI assistant tasked with updating the Perviewsis platform code in this Replit project. The goal is to:
+
+1) **Remove all test/sample users and sample telemetry data** from the system.
+   - Delete any seeds, fixtures, mocks, scripts, and hard-coded test data.
+   - Remove mock mode that populates fake APM responses.
+   - Remove all dummy accounts and replace with real user/org logic only.
+   - Ensure no test entities remain in the database schema or in the code.
+
+2) Implement **real API integrations for AppDynamics and Dynatrace**:
+   - Replace mock connectors with real API clients:
+     • AppDynamics
+     • Dynatrace
+   - Use secure credential storage (environment variables / encrypted config).
+   - Support multi-tenant / organization-based integration logic:
+     • Each user belongs to an organization.
+     • Each organization can register multiple APM controllers/environments.
+     • API credentials must be stored per organization.
+
+3) Update Backend Routes and Services to use live APIs:
+   - Endpoints to implement:
+     • POST /api/integrations/appdynamics — Add/Update controller
+     • POST /api/integrations/dynatrace — Add/Update environment
+     • GET /api/integrations — List org integrations
+     • DELETE /api/integrations/:id — Remove integration
+   - Add service modules:
+     • `services/appdynamics.service.js`
+       - Authenticate with AppDynamics Controller using account/username/password/client credentials
+       - Implement real API calls for:
+         — Applications list
+         — Metrics
+         — Problems/Events
+         — Business Transactions
+       - Handle pagination and rate limits
+     • `services/dynatrace.service.js`
+       - Authenticate with Dynatrace API token
+       - Implement calls for:
+         — Entities
+         — Metrics
+         — Problems/Events
+         — Error summaries
+       - Respect Dynatrace API quota
+
+4) Update Data Fetching Logic:
+   - Replace all mock endpoints with real API responses.
+   - Update error/alert/problem fetch logic to integrate with AppDynamics & Dynatrace:
+     • Fetch problems
+     • Fetch health rule violations
+     • Fetch metrics for forecast & capacity features
+   - Ensure organization scoping:
+     • Each integration call must be executed using credentials linked to the current user’s organization.
+
+5) Remove mock mode:
+   - Disable “mock” fallback now that real API integrations are present.
+   - If an org has no integration configured, return a user-friendly message prompting them to add a valid integration.
+
+6) Authentication & Authorization:
+   - Ensure authenticated access with real user accounts.
+   - Support multi-tenant logic:
+     • Users can belong to only one organization or multiple depending on role.
+     • Requests must check organization permissions for integrations and data.
+
+7) Update Frontend:
+   - Remove mock UI toggles or demo mode switches.
+   - Update Integrations UI:
+     • Allow users to register and manage AppDynamics controllers
+     • Allow users to register and manage Dynatrace environments
+     - Show real connection status and last sync results
+   - Update dashboards to show live data from AppDynamics & Dynatrace.
+
+8) Implement Error Handling and Logging:
+   - If an API call fails, log the error.
+   - Show a clean user-friendly message to the frontend.
+   - Provide retry logic for temporary network failures.
+
+9) Add Tests:
+   - Write integration tests for backend API connectors (can be stubs if needed).
+   - Ensure all test users/sample data removal does not break test suites.
+
+10) Documentation:
+   - Update README with:
+     • How to configure environment variables for AppDynamics & Dynatrace
+     • How to manage integrations per organization
+     • API usage examples
+
+Important:
+- Use environment variables for all sensitive config.
+- Code should be clean and follow existing project structure.
+- Follow best practices for error handling, API pagination, and rate limits.

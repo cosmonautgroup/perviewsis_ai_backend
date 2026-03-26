@@ -1,0 +1,334 @@
+Extend the existing Predictive Observability Platform with enterprise-ready platform management features.
+
+Add the following modules:
+	•	My Profile (User Management)
+	•	Integrations Management
+	•	Subscription & Billing
+	•	Multi-Controller Support
+	•	SaaS Readiness Architecture
+
+⸻
+
+👤 1️⃣ MY PROFILE MODULE
+
+Route:
+
+/profile
+
+Features:
+
+Basic Information
+	•	Full Name
+	•	Email (read-only if SSO future-ready)
+	•	Company Name
+	•	Role (Admin / SRE / Business Viewer)
+	•	Timezone
+	•	Theme preference (Light / Dark)
+
+Security
+	•	Change password
+	•	Confirm old password
+	•	Password strength indicator
+	•	Two-Factor Authentication (UI placeholder)
+	•	Session management (show active sessions mock)
+
+Notification Preferences
+	•	Email alerts toggle
+	•	Incident alerts toggle
+	•	SLA breach alerts
+	•	Weekly executive summary report toggle
+
+⸻
+
+Backend Requirements
+
+Create:
+
+/server/routes/profile.js
+/store user data in:
+	•	SQLite (preferred)
+OR
+	•	In-memory storage (MVP)
+
+Password must:
+	•	Be hashed using bcrypt
+	•	Never returned to frontend
+
+Add middleware:
+	•	Auth middleware (JWT based session token)
+
+⸻
+
+🔗 2️⃣ INTEGRATIONS PAGE
+
+Route:
+
+/integrations
+
+This page manages telemetry source connections.
+
+UI Layout:
+
+Section 1: Active Integrations
+
+Show cards for:
+	•	AppDynamics Controllers
+	•	OpenTelemetry Collector
+	•	Dynatrace
+
+Each card must show:
+	•	Integration Name
+	•	Environment (Prod / QA / Dev)
+	•	Status (Connected / Disconnected / Error)
+	•	Last sync time
+	•	Edit button
+	•	Remove button
+	•	Test Connection button
+
+⸻
+
+Add Integration Modal
+
+Allow user to add:
+
+AppDynamics Controller
+
+Fields:
+	•	Controller URL
+	•	Account Name
+	•	Username
+	•	Password / Client ID + Secret
+	•	Environment tag
+
+OpenTelemetry Collector
+
+Fields:
+	•	Collector Endpoint
+	•	Protocol (OTLP HTTP / OTLP gRPC)
+	•	Environment
+
+Dynatrace
+
+Fields:
+	•	Environment URL
+	•	API Token
+	•	Environment name
+
+⸻
+
+Upcoming Integrations (Disabled with “Coming Soon” Badge)
+
+Display cards (non-clickable):
+	•	SolarWinds
+	•	New Relic
+	•	Datadog
+	•	Splunk Observability
+	•	Azure Monitor
+	•	AWS CloudWatch
+	•	Google Cloud Operations
+
+Badge:
+“Upcoming Integration”
+
+⸻
+
+Backend Structure
+
+/server/routes/integrations.js
+
+Store integrations per user.
+
+Support:
+GET /api/integrations
+POST /api/integrations
+DELETE /api/integrations/:id
+PUT /api/integrations/:id
+
+Use encrypted storage for credentials.
+
+⸻
+
+Multi-Controller Logic
+
+Allow:
+	•	Multiple AppDynamics controllers
+	•	Multiple Dynatrace environments
+	•	Multiple OTEL collectors
+
+On dashboard load:
+User can switch active environment via dropdown.
+
+⸻
+
+💳 3️⃣ SUBSCRIPTION & BILLING MODULE
+
+Route:
+
+/subscription
+
+This page defines SaaS commercial model.
+
+⸻
+
+Subscription Plans
+
+Create 3 plans:
+
+🟢 Starter
+	•	1 Integration
+	•	5 Applications
+	•	Basic dashboards
+	•	No AI forecasting
+	•	No automation
+	•	Email support
+
+🟡 Professional
+	•	5 Integrations
+	•	Unlimited applications
+	•	AI forecasting
+	•	Incident grouping
+	•	Capacity planning
+	•	Automation (basic)
+	•	Priority email support
+
+🔴 Enterprise
+	•	Unlimited integrations
+	•	Multi-tenant
+	•	AI causal engine
+	•	Knowledge graph
+	•	Automation workflows
+	•	Role-based access control
+	•	Dedicated support
+	•	SLA guarantee
+
+⸻
+
+UI Must Show:
+	•	Current plan
+	•	Usage statistics:
+	•	Number of integrations used
+	•	Number of monitored apps
+	•	API usage
+	•	Upgrade button
+	•	Downgrade button
+	•	Billing cycle selector (Monthly / Annual)
+
+⸻
+
+Add Usage Meter Logic
+
+Backend should:
+	•	Track integration count
+	•	Track API calls
+	•	Track telemetry ingestion volume
+
+If limit exceeded:
+	•	Show warning banner
+	•	Restrict new integration creation
+
+⸻
+
+Future Payment Integration (Placeholder)
+
+Add UI:
+“Connect Stripe (Coming Soon)”
+
+Simulate:
+	•	Invoice history
+	•	Payment method
+	•	Renewal date
+	•	Trial days left
+
+⸻
+
+🏢 4️⃣ MULTI-TENANCY SUPPORT (STRUCTURE PREP)
+
+Prepare architecture for:
+	•	Organization-based model
+	•	Each user belongs to an organization
+	•	Integrations tied to organization
+	•	Subscription tied to organization
+
+Database schema suggestion:
+
+Users
+Organizations
+Integrations
+Subscriptions
+UsageMetrics
+
+⸻
+
+🧠 5️⃣ ROLE-BASED ACCESS CONTROL (RBAC)
+
+Add roles:
+	•	Admin
+	•	SRE
+	•	Business Viewer
+
+Permissions:
+
+Admin:
+	•	Manage integrations
+	•	Manage subscription
+	•	Manage users
+
+SRE:
+	•	View dashboards
+	•	View incidents
+	•	Trigger automation
+
+Business Viewer:
+	•	View business dashboards only
+	•	No configuration access
+
+⸻
+
+🎨 UI ENHANCEMENTS
+
+Sidebar must now include:
+	•	Applications
+	•	Incidents
+	•	AI Insights
+	•	Capacity
+	•	OpenTelemetry
+	•	Integrations
+	•	Subscription
+	•	My Profile
+
+Add:
+	•	Organization switcher (top navbar)
+	•	Environment switcher dropdown
+	•	User avatar dropdown
+
+⸻
+
+🔐 SECURITY REQUIREMENTS
+	•	JWT-based authentication
+	•	Password hashing
+	•	Credentials encrypted at rest
+	•	Never expose secrets to frontend
+	•	Use backend proxy for all APM calls
+
+⸻
+
+📊 ENTERPRISE READINESS BADGES
+
+Add “Enterprise Ready” indicators for:
+	•	Multi-controller support
+	•	Vendor-neutral telemetry
+	•	AI-driven insights
+	•	Role-based access control
+	•	Subscription-based SaaS model
+
+⸻
+
+🎯 END GOAL
+
+After this extension, the platform should feel like:
+
+✔ A real SaaS observability product
+✔ Multi-tenant capable
+✔ Vendor-neutral
+✔ Commercially viable
+✔ Enterprise-grade

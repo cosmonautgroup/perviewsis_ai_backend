@@ -1,0 +1,92 @@
+Extend  a conversational AI assistant named **Insight Navigator AI** for the Perviewsis Observability Platform with the following capabilities:
+
+1️⃣ **Auto-Linking Across Dashboards**
+- When the user asks questions about applications, incidents, alerts, errors, or servers, return structured answers that include clickable links to the corresponding dashboards.
+- Links should point to:
+  - Incident dashboard: /applications/:appId/incidents/:incidentId
+  - Alert/Error dashboard: /applications/:appId/alerts/:alertId
+  - Server/Node dashboard: /applications/:appId/servers/:serverId
+- Include metadata in the JSON response for the frontend to render clickable buttons/cards.
+
+2️⃣ **Inline Graphs and Tables**
+- Include inline visualizations for metrics when relevant.
+- Graph types:
+  - Time series: response time, CPU, memory, error rate, throughput
+  - Bar/line charts for service errors or server performance
+- Table types:
+  - Top 5 slow transactions
+  - Services generating most errors
+  - Server resource usage (CPU, memory, disk, network)
+- Return the visualization metadata in the JSON response:
+  {
+    inlineMetrics: [
+      { title: "CPU Usage", type: "lineChart", data: [ { time: "...", value: ... } ] },
+      { title: "Top Errors", type: "table", data: [ { service: "...", errorCount: ... } ] }
+    ]
+  }
+
+3️⃣ **Session Context Memory**
+- Maintain session-level memory to allow continuous conversation across pages.
+- Store the context per user session:
+  - Previously asked questions
+  - Related incidents, alerts, errors, servers viewed
+  - Any AI recommendations or explanations previously returned
+- Merge session context with new question so that AI can provide context-aware answers:
+  - Example: If user first asks about “App X errors” and later asks “Which servers are causing them?”, AI should remember the App X context.
+
+4️⃣ **Structured AI JSON Response**
+- Always return structured JSON, not plain text.
+- Keys:
+  - answerText: String summary answer for the user
+  - recommendations: [{ action: "...", link: "...", priority: "high|medium|low" }]
+  - relatedIncidents: [{ id: "...", link: "..." }]
+  - relatedAlerts: [{ id: "...", link: "..." }]
+  - relatedErrors: [{ id: "...", link: "..." }]
+  - relatedServers: [{ id: "...", link: "..." }]
+  - inlineMetrics: [{ title: "...", type: "lineChart|barChart|table", data: [...] }]
+- Ensure JSON is fully parseable; fallback to answerText if any parsing fails.
+
+5️⃣ **Ollama AI Integration**
+- Use Ollama LLM (llama3) to process the question, context, and session memory.
+- Include causal reasoning, predictions, correlations, and actionable recommendations.
+- AI should always reference dashboard links for drilling down.
+
+6️⃣ **Frontend Rendering**
+- Chat interface should:
+  - Render clickable buttons/cards for linked incidents, alerts, errors, and servers
+  - Render inline charts/tables using Recharts or similar libraries
+  - Maintain session context across page navigations so users can continue a conversation from anywhere in the platform
+
+7️⃣ **Error Handling**
+- If the AI fails to produce structured JSON, return a fallback answerText with links to relevant dashboards
+- Log all AI responses and related metrics for debugging and improvement
+
+8️⃣ **Example User Interaction**
+User: “Which services are causing errors in App X?”
+AI JSON Response:
+{
+  "answerText": "The services 'Auth Service' and 'Payment Service' are generating the most errors.",
+  "recommendations": [
+    { "action": "Investigate Auth Service timeouts", "link": "/applications/123/incidents/456", "priority": "high" }
+  ],
+  "relatedIncidents": [
+    { "id": "456", "link": "/applications/123/incidents/456" }
+  ],
+  "relatedAlerts": [
+    { "id": "789", "link": "/applications/123/alerts/789" }
+  ],
+  "relatedServers": [
+    { "id": "srv-001", "link": "/applications/123/servers/srv-001" }
+  ],
+  "inlineMetrics": [
+    { "title": "CPU Usage Over Last 24h", "type": "lineChart", "data": [ { "time": "...", "value": 75 } ] },
+    { "title": "Top Error Types", "type": "table", "data": [ { "service": "Auth Service", "errorCount": 34 } ] }
+  ]
+}
+
+9️⃣ **Goal**
+- Provide a fully interactive, AI-powered chat that allows users to:
+  - Drill down from incidents to alerts/errors to servers
+  - View inline metrics and graphs
+  - Maintain conversational context across the platform
+- Output structured, actionable, and drillable data ready for frontend rendering in Perviewsis.

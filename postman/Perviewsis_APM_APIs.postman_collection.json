@@ -1,0 +1,631 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Perviewsis — APM Controller APIs",
+    "description": "API collection for AppDynamics and Dynatrace as integrated by Perviewsis (Cosmonaut Technologies).\n\nImport the paired environment file `Perviewsis_APM_Environments.postman_environment.json` and fill in your credential variables before running requests.\n\n**AppDynamics Auth:** Basic Auth built from `{{appd_username}}@{{appd_account}}:{{appd_password}}`\n**Dynatrace Auth:** `Authorization: Api-Token {{dt_api_token}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "AppDynamics",
+      "description": "AppDynamics REST API v1\n\nBase URL: {{appd_controller_url}}/controller/rest\nDocs: https://docs.appdynamics.com/display/PRO21/AppDynamics+APIs\n\nAll requests append ?output=JSON automatically.",
+      "item": [
+        {
+          "name": "Test Connection",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications?output=JSON",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications"],
+              "query": [{ "key": "output", "value": "JSON" }]
+            },
+            "description": "Tests connectivity to the AppDynamics controller by fetching the application list. If successful, the controller URL, account, username and password are correct."
+          },
+          "response": []
+        },
+        {
+          "name": "List Applications",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications?output=JSON",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications"],
+              "query": [{ "key": "output", "value": "JSON" }]
+            },
+            "description": "Returns all applications visible to the authenticated user on this controller.\n\nResponse fields:\n- `id` — AppDynamics internal app ID (use this as {{appd_app_id}})\n- `name` — Application display name\n- `description` — App description\n- `accountGuid` — Account GUID"
+          },
+          "response": []
+        },
+        {
+          "name": "List Nodes",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/nodes?output=JSON",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "nodes"],
+              "query": [{ "key": "output", "value": "JSON" }]
+            },
+            "description": "Returns all agent nodes/JVMs for a given application.\n\nSet `{{appd_app_id}}` to the numeric application ID from List Applications.\n\nResponse fields:\n- `id`, `name` — Node identity\n- `tierId`, `tierName` — Tier the node belongs to\n- `appAgentPresent` — Whether an app agent is installed\n- `machineAgentPresent` — Whether a machine agent is installed\n- `ipAddresses` — Node IP addresses"
+          },
+          "response": []
+        },
+        {
+          "name": "List Business Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/business-transactions?output=JSON",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "business-transactions"],
+              "query": [{ "key": "output", "value": "JSON" }]
+            },
+            "description": "Returns all business transactions for the application with current performance metrics.\n\nResponse fields:\n- `id`, `name` — BT identity\n- `tierId`, `tierName` — Tier the BT belongs to\n- `averageResponseTime` — Average response time in ms\n- `callsPerMinute` — Throughput\n- `errorsPerMinute` — Error count per minute"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Problems (Incidents)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/problems?output=JSON&time-range-type=BEFORE_NOW&duration-in-mins=1440",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "problems"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "1440", "description": "1440 = last 24 hours" }
+              ]
+            },
+            "description": "Returns all problems/incidents for the application in the last 24 hours (1440 mins).\n\nAdjust `duration-in-mins` to change the time window:\n- 60 = last 1 hour\n- 1440 = last 24 hours\n- 10080 = last 7 days\n\nResponse fields:\n- `id`, `name` — Problem identity\n- `severity` — INFO, WARNING, CRITICAL\n- `status` — OPEN, RESOLVED, CANCELLED\n- `startTime`, `endTime` — Unix timestamps in ms\n- `affectedEntityDefinitions` — Affected tiers/nodes"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Health Rule Violations (Alerts)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/healthrule-violations?output=JSON&time-range-type=BEFORE_NOW&duration-in-mins=1440",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "healthrule-violations"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "1440" }
+              ]
+            },
+            "description": "Returns health rule violations (maps to Alerts in Perviewsis). These are threshold breaches that may or may not escalate to full incidents.\n\nResponse fields:\n- `id`, `name` — Violation identity\n- `healthRuleName` — The health rule that was breached\n- `affectedEntityType` — APPLICATION, TIER, NODE, BT\n- `affectedEntityName` — Entity display name\n- `severity` — WARNING or CRITICAL\n- `occurrenceTime`, `resolvedTime` — Unix timestamps in ms\n- `incidentStatus` — OPEN, RESOLVED"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Average Response Time",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/metrics?output=JSON&metric-path=Overall Application Performance|Average Response Time (ms)&time-range-type=BEFORE_NOW&duration-in-mins=60&rollup=false",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "metrics"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "metric-path", "value": "Overall Application Performance|Average Response Time (ms)" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "60" },
+                { "key": "rollup", "value": "false", "description": "false = per-minute data points; true = single rolled-up value" }
+              ]
+            },
+            "description": "Returns time-series response time data for the last 60 minutes.\n\nResponse structure:\n- `metricName` — Metric display name\n- `metricPath` — Full metric path\n- `metricValues[]` — Array of data points\n  - `startTimeInMillis` — Bucket start timestamp\n  - `value` — Metric value\n  - `count` — Sample count"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Errors Per Minute",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/metrics?output=JSON&metric-path=Overall Application Performance|Errors per Minute&time-range-type=BEFORE_NOW&duration-in-mins=60&rollup=false",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "metrics"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "metric-path", "value": "Overall Application Performance|Errors per Minute" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "60" },
+                { "key": "rollup", "value": "false" }
+              ]
+            },
+            "description": "Returns error rate (errors per minute) time-series for the last 60 minutes."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — CPU Usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/metrics?output=JSON&metric-path=Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|CPU|%Busy&time-range-type=BEFORE_NOW&duration-in-mins=60&rollup=false",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "metrics"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "metric-path", "value": "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|CPU|%Busy" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "60" },
+                { "key": "rollup", "value": "false" }
+              ]
+            },
+            "description": "Returns CPU % busy across all tiers and nodes for the last 60 minutes. The wildcard `*` matches all tiers and nodes."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Memory Usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/metrics?output=JSON&metric-path=Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Memory|Used %&time-range-type=BEFORE_NOW&duration-in-mins=60&rollup=false",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "metrics"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "metric-path", "value": "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Memory|Used %" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "60" },
+                { "key": "rollup", "value": "false" }
+              ]
+            },
+            "description": "Returns memory used % across all nodes for the last 60 minutes."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Events (Application Errors)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "{{appd_username}}@{{appd_account}}", "type": "string" },
+                { "key": "password", "value": "{{appd_password}}", "type": "string" }
+              ]
+            },
+            "url": {
+              "raw": "{{appd_controller_url}}/controller/rest/applications/{{appd_app_id}}/events?output=JSON&time-range-type=BEFORE_NOW&duration-in-mins=1440&event-types=APPLICATION_ERROR,DIAGNOSTIC_SESSION&severities=ERROR,WARN",
+              "host": ["{{appd_controller_url}}"],
+              "path": ["controller", "rest", "applications", "{{appd_app_id}}", "events"],
+              "query": [
+                { "key": "output", "value": "JSON" },
+                { "key": "time-range-type", "value": "BEFORE_NOW" },
+                { "key": "duration-in-mins", "value": "1440" },
+                { "key": "event-types", "value": "APPLICATION_ERROR,DIAGNOSTIC_SESSION", "description": "Comma-separated event types" },
+                { "key": "severities", "value": "ERROR,WARN", "description": "Comma-separated severity levels" }
+              ]
+            },
+            "description": "Returns application error events and diagnostic sessions for the last 24 hours.\n\nAvailable event-types:\n- APPLICATION_ERROR\n- DIAGNOSTIC_SESSION\n- POLICY_OPEN\n- POLICY_CLOSE\n- POLICY_CONTINUES\n- REQUEST_SLOWNESS\n- OBJECT_CONTENT_SUMMARY\n- CUSTOM\n- THREAD_DUMP\n- MEMORY_DUMP\n\nAvailable severities: INFO, WARN, ERROR"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dynatrace",
+      "description": "Dynatrace REST API v2\n\nBase URL: {{dt_environment_url}}/api/v2\nDocs: https://www.dynatrace.com/support/help/dynatrace-api\n\nRequired API token scopes:\n- problems.read\n- entities.read\n- metrics.read\n- logs.read\n- events.read",
+      "item": [
+        {
+          "name": "Test Connection",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/entities?entitySelector=type(SERVICE)&pageSize=1",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "entities"],
+              "query": [
+                { "key": "entitySelector", "value": "type(SERVICE)" },
+                { "key": "pageSize", "value": "1" }
+              ]
+            },
+            "description": "Tests connectivity and token validity by fetching a single SERVICE entity. A 200 response means the environment URL and API token are correct and the token has the `entities.read` scope."
+          },
+          "response": []
+        },
+        {
+          "name": "List Services",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/entities?entitySelector=type(SERVICE)&fields=properties,tags&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "entities"],
+              "query": [
+                { "key": "entitySelector", "value": "type(SERVICE)" },
+                { "key": "fields", "value": "properties,tags" },
+                { "key": "pageSize", "value": "100" }
+              ]
+            },
+            "description": "Returns all monitored services (applications/microservices).\n\nResponse fields:\n- `entityId` — Dynatrace entity ID (e.g. SERVICE-ABC123)\n- `displayName` — Service display name\n- `type` — Entity type (SERVICE)\n- `properties` — Technology, response time, throughput\n- `tags` — Applied tags\n\nUse the `entitySelector` query language to filter:\n- `type(SERVICE),tag(env:production)` — Production services only\n- `type(SERVICE),entityName(\"my-service\")` — By name"
+          },
+          "response": []
+        },
+        {
+          "name": "List Hosts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/entities?entitySelector=type(HOST)&fields=properties,tags&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "entities"],
+              "query": [
+                { "key": "entitySelector", "value": "type(HOST)" },
+                { "key": "fields", "value": "properties,tags" },
+                { "key": "pageSize", "value": "100" }
+              ]
+            },
+            "description": "Returns all monitored hosts/servers/VMs.\n\nProperties include OS type, CPU cores, memory, cloud provider details."
+          },
+          "response": []
+        },
+        {
+          "name": "List Process Groups",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/entities?entitySelector=type(PROCESS_GROUP)&fields=properties,tags&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "entities"],
+              "query": [
+                { "key": "entitySelector", "value": "type(PROCESS_GROUP)" },
+                { "key": "fields", "value": "properties,tags" },
+                { "key": "pageSize", "value": "100" }
+              ]
+            },
+            "description": "Returns all process groups — logical groupings of processes that run the same technology stack."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Problems (Incidents)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/problems?from=now-24h&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "problems"],
+              "query": [
+                { "key": "from", "value": "now-24h", "description": "Relative time: now-1h, now-7d, or ISO 8601 timestamp" },
+                { "key": "pageSize", "value": "100" }
+              ]
+            },
+            "description": "Returns all problems (incidents) in the last 24 hours.\n\nSeverity levels and Perviewsis mapping:\n- AVAILABILITY → Critical\n- ERROR → Critical\n- PERFORMANCE → High\n- RESOURCE_CONTENTION → High\n- CUSTOM_ALERT → Medium\n\nStatus mapping:\n- OPEN → Open\n- CLOSED → Resolved\n\nResponse fields:\n- `problemId` — Internal ID\n- `displayId` — Human-readable ID (e.g. P-12345)\n- `title` — Problem title\n- `severityLevel`, `status`\n- `startTime`, `endTime` — Unix timestamps in ms\n- `impactedEntities` — Affected services/hosts\n- `rootCauseEntity` — AI-identified root cause entity\n\nFilter options:\n- `problemSelector=status(OPEN)` — Open problems only\n- `problemSelector=severityLevel(AVAILABILITY)` — Availability problems"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Host CPU Usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:host.cpu.usage&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:host.cpu.usage" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m", "description": "Data point resolution: 1m, 5m, 15m, 1h" }
+              ]
+            },
+            "description": "Returns CPU usage (%) for all monitored hosts over the last hour in 5-minute buckets.\n\nResponse structure:\n- `resolution` — Actual data resolution returned\n- `result[]` — Array of metric series\n  - `metricId` — Metric identifier\n  - `data[]` — Array of series\n    - `timestamps[]` — Unix timestamps in ms\n    - `values[]` — Metric values (null if no data)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Host Memory Usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:host.mem.usage&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:host.mem.usage" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns memory usage (%) for all monitored hosts over the last hour."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Host Disk Usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:host.disk.usedPct&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:host.disk.usedPct" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns disk used % for all monitored hosts."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Network Bytes Received",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:host.net.bytesRx&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:host.net.bytesRx" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns inbound network bytes for all monitored hosts."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Service Response Time",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:service.response.time&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:service.response.time" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns response time (microseconds) for all monitored services.\n\nNote: Dynatrace returns response time in microseconds. Divide by 1000 to get milliseconds."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Service Error Rate",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:service.errors.total.rate&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:service.errors.total.rate" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns error rate (%) for all monitored services."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Metrics — Service Throughput",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/metrics/query?metricSelector=builtin:service.requestCount.total&from=now-1h&resolution=5m",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "metrics", "query"],
+              "query": [
+                { "key": "metricSelector", "value": "builtin:service.requestCount.total" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "resolution", "value": "5m" }
+              ]
+            },
+            "description": "Returns total request count (throughput) for all monitored services."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/events?from=now-24h&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "events"],
+              "query": [
+                { "key": "from", "value": "now-24h" },
+                { "key": "pageSize", "value": "100" },
+                { "key": "eventType", "value": "", "disabled": true, "description": "Optional: AVAILABILITY_EVENT, PERFORMANCE_EVENT, ERROR_EVENT, RESOURCE_CONTENTION_EVENT, CUSTOM_ALERT, INFO_EVENT, MARKED_FOR_TERMINATION" }
+              ]
+            },
+            "description": "Returns events from the last 24 hours. Enable the optional `eventType` query param to filter by event category."
+          },
+          "response": []
+        },
+        {
+          "name": "Search Logs (Error Logs)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Api-Token {{dt_api_token}}" },
+              { "key": "Accept", "value": "application/json; charset=utf-8" }
+            ],
+            "url": {
+              "raw": "{{dt_environment_url}}/api/v2/logs/search?query=status:error&from=now-1h&pageSize=100",
+              "host": ["{{dt_environment_url}}"],
+              "path": ["api", "v2", "logs", "search"],
+              "query": [
+                { "key": "query", "value": "status:error", "description": "DQL query string. Examples: status:error, content:OutOfMemoryError, loglevel:ERROR" },
+                { "key": "from", "value": "now-1h" },
+                { "key": "pageSize", "value": "100" }
+              ]
+            },
+            "description": "Searches logs using Dynatrace Query Language (DQL).\n\nCommon query examples:\n- `status:error` — All error-level logs\n- `status:error AND content:\"NullPointerException\"` — Specific exception\n- `loglevel:ERROR AND dt.entity.service:SERVICE-ABC123` — Errors for a specific service\n\nResponse fields per record:\n- `timestamp` — ISO 8601 timestamp\n- `level` — Log level\n- `content` — Log message\n- `additionalColumns` — Extra fields (host, process, service)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

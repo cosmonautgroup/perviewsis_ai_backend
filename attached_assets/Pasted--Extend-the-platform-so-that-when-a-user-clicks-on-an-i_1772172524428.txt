@@ -1,0 +1,283 @@
+
+
+
+Extend the platform so that when a user clicks on an incident in the incident list or dashboard, they are taken to a rich Incident Detail View that provides deep insights, root cause analysis, AI recommendations, and tools to help engineers quickly understand and debug the issue.
+
+⸻
+
+🎯 USER JOURNEY: INCIDENT DETAIL
+
+User Action:
+User clicks an incident item from:
+	•	Application Dashboard
+	•	Services Tab
+	•	Infrastructure Tab
+	•	Incident List Page
+
+Navigation Route:
+/incidents/:incidentId
+
+⸻
+
+🧠 INCIDENT DETAIL VIEW REQUIREMENTS
+
+📌 1️⃣ Top-Level Summary Panel
+
+At the top of the Incident Detail page, show:
+	•	Incident ID
+	•	Status (Open / Investigating / Resolved / Auto-Remediated)
+	•	Severity Level (Critical / High / Medium / Low)
+	•	Start Time
+	•	Duration
+	•	Incident Confidence Score (AI score)
+	•	Business Impact Score (estimated impact)
+
+⸻
+
+📊 2️⃣ Affected Scope Summary
+
+Sections:
+1. Affected Applications
+	•	Application name
+	•	Health status
+	•	Error rate spike
+
+2. Affected Services
+	•	List of services impacted
+	•	Error categories
+	•	Severity per service
+
+3. Affected Infrastructure
+	•	Servers / Pods affected
+	•	Problem types (CPU, Memory, Disk, Network)
+	•	Severity icons
+
+⸻
+
+🔍 3️⃣ Root Cause Analysis (AI Driven)
+
+Display an AI-powered root cause breakdown:
+
+🔹 Root Cause Hypothesis
+	•	Summary text:
+“The AI causal engine has identified Service A timeout caused by CPU saturation on Server X triggered by Database latency spikes.”
+
+🔹 Root Cause Confidence Score
+	•	Display: Confidence: 92%
+
+🔹 Causal Chains Diagram
+	•	Visually show causal relationships:
+
+Database Latency Spike → CPU Spike → Service Timeout → Incident Trigger
+
+
+
+🔹 Evidence Metrics
+
+Show supporting metric charts around the incident window:
+
+Metric	Chart
+CPU	Time series around alert
+Memory	Time series
+Error Rate	Time series
+Response Time	Time series
+Throughput	Time series
+
+Highlight spike correlations with colored markers.
+
+⸻
+
+🧪 4️⃣ Affected Transactions & Traces
+
+Provide two sections:
+
+📌 A) Affected Transactions
+	•	List of business transactions impacted
+	•	Throughput drop
+	•	Error spike %
+	•	SLA breach marker
+
+Clicking a transaction opens:
+/transactions/:transactionId
+
+📌 B) Traces (Where Supported)
+	•	Top slow trace examples
+	•	Trace timeline
+	•	Span breakdown
+	•	Duration heatmap
+
+⸻
+
+💡 5️⃣ AI INSIGHTS PANEL
+
+AI should provide:
+
+🔹 Predictive Risk Prediction
+	•	“Forecast shows 65% chance of recurrence in next 24 hours.”
+	•	Time to next predicted event
+
+🔹 Recommendation Engine
+
+Show rule-based + heuristic recommendations:
+
+Example rules:
+
+IF CPU > 85% for > 5 min
+→ Suggest horizontal pod scaling
+
+IF DB latency > threshold AND errors spike
+→ Suggest query optimization + connection pooling
+
+Display each recommendation with:
+	•	Title
+	•	Description
+	•	Category (App / Service / Infra)
+	•	Confidence Score
+	•	Estimated impact reduction
+	•	Next steps
+
+⸻
+
+🚀 6️⃣ Debugging Tools & Drill-Down
+
+Each recommendation or metric should be clickable to further drill into details:
+
+🔹 Drill Into Affected Service
+
+Click → /applications/:appId/services/:serviceId
+
+🔹 Drill Into Server Details
+
+Click → /applications/:appId/servers/:serverId
+
+🔹 Drill Into Trace
+
+Click → /trace/:traceId
+
+🔹 Drill Into Metric History
+
+Open time picker to see:
+	•	Last 1h
+	•	Last 24h
+	•	Last 7d
+
+⸻
+
+📅 7️⃣ Timeline & Incident Lifecycle
+
+Show a timeline with:
+	•	Incident trigger timestamp
+	•	First metric deviation
+	•	Root cause identified
+	•	Recommendations generated
+	•	Prediction windows
+	•	Auto-remediation (if enabled)
+
+Chronologically visualize:
+
+⏱ T-15min | Metric spike begins
+⏱ T-3min  | Service timeout
+⏱ T       | Incident created
+⏱ T+2min  | AI root cause hypothesis
+⏱ T+4min  | First recommendation
+⏱ T+6min  | Forecast suggests recurrence
+
+
+⸻
+
+🧠 8️⃣ Collaboration & Notes
+
+Add an incident notes section:
+	•	Internal comments
+	•	Timeline notes
+	•	AI summary notes
+	•	Tags (e.g., “DB Issue”, “CPU Spike”)
+
+Allow user to:
+	•	Add comment
+	•	Tag team
+	•	Assign to engineer
+
+⸻
+
+🧯 9️⃣ Auto-Remediation Actions (Optional)
+
+If enabled, show:
+	•	Auto-Remediation available
+	•	“Execute Remediation” button
+	•	Script type (Terraform / Ansible / Custom)
+	•	Preview of changes
+	•	Estimated impact
+	•	Audit log
+
+Simulate:
+
+Trigger: CPU > 80% AND error spike
+Action: Scale up by 2 pods
+
+Show history of auto actions with status:
+	•	Executed
+	•	Failed
+	•	Reverted
+
+⸻
+
+🧠 10️⃣ Backend Endpoints For Incident Detail
+
+Create or extend:
+
+GET /api/incidents/:incidentId
+
+Response should include:
+
+{
+  "incidentId": "...",
+  "status": "...",
+  "severity": "...",
+  "startTime": "...",
+  "duration": "...",
+  "confidenceScore": "...",
+  "businessImpactScore": "...",
+  "affectedTransactions": [...],
+  "affectedServices": [...],
+  "affectedServers": [...],
+  "rootCause": {...},
+  "causalChains": [...],
+  "metrics": {...},
+  "recommendations": [...],
+  "forecastRisk": {...},
+  "timeline": [...]
+}
+
+
+⸻
+
+🧼 UI REQUIREMENTS
+	•	Clear Incident header
+	•	Collapsible sections (Root Cause, Recommendations, Affected Entities)
+	•	Visual timeline view
+	•	Colored risk markers
+	•	On-hover tooltips with metric context
+	•	Action buttons for deep drilldown
+
+⸻
+
+📈 DEMO READINESS
+	•	Provide mocked incident data if no live source
+	•	Simulate realistic lifecycle
+	•	Include predicted future events
+	•	Show dynamic recommendation changes
+
+⸻
+
+🎯 FINAL GOAL
+
+Deliver an Incident Detail module that ensures users can:
+
+✔ Understand exactly what happened
+✔ See what was impacted
+✔ Explore cause & effect connections
+✔ Get AI-generated, actionable recommendations
+✔ Drill into any element of the system
+✔ Debug with clarity and precision
+

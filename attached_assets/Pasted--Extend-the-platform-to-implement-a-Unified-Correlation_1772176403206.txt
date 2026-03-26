@@ -1,0 +1,363 @@
+
+
+Extend the platform to implement a Unified Correlation & Navigation Framework that interconnects:
+
+Incidents ↔ Alerts ↔ Errors ↔ Transactions ↔ Services ↔ Nodes ↔ Deployments
+
+The system must feel seamless, intuitive, and intelligent.
+
+⸻
+
+🎯 OBJECTIVE
+
+Users must be able to:
+	•	Go from an Incident → related Alerts / Errors / Nodes
+	•	Go from an Error → related Incident / Alert / Transactions
+	•	Go from an Alert → related Errors / Incident / Service
+	•	Go from a Server/Node → related Incidents / Alerts / Errors
+	•	Go from a Transaction → upstream/downstream dependencies
+
+All modules must communicate through a shared correlation layer.
+
+⸻
+
+🧠 1️⃣ Unified Correlation Engine
+
+Implement a central correlation service:
+
+Core Correlation Keys:
+	•	timestamp proximity
+	•	service name
+	•	host/node ID
+	•	transaction ID
+	•	trace ID
+	•	deployment ID
+	•	error cluster ID
+	•	health rule ID
+
+Correlation logic should support:
+	•	Time-based correlation (events within same window)
+	•	Entity-based correlation (same service/node)
+	•	Pattern-based correlation (same error cluster)
+	•	Causal chain detection (dependency mapping)
+
+⸻
+
+🧭 2️⃣ Global Smart Navigation Layer
+
+Add a Universal Context Bar at top of every detail page:
+
+Example:
+
+Incident #INC-1023
+Related:
+[ 4 Alerts ] [ 12 Errors ] [ 3 Nodes ] [ 2 Transactions ] [ 1 Deployment ]
+
+Each item is clickable.
+
+This context bar appears on:
+	•	Incident Detail Page
+	•	Alert Detail Page
+	•	Error Detail Page
+	•	Node/Server Page
+	•	Transaction Page
+
+⸻
+
+🔥 3️⃣ Incident Cross-Linking
+
+On /incidents/:incidentId
+
+Add:
+
+🔹 Related Alerts Section
+
+Table:
+	•	Alert Name
+	•	Severity
+	•	Trigger Time
+	•	Source
+Click → /alerts/:alertId
+
+⸻
+
+🔹 Related Errors Section
+
+Grouped by cluster.
+Click → /errors/:errorId
+
+⸻
+
+🔹 Affected Infrastructure
+
+Show:
+	•	Servers / Nodes
+	•	Containers
+	•	Databases
+Click → /nodes/:nodeId
+
+⸻
+
+🔹 Impacted Transactions
+
+Click → /transactions/:transactionId
+
+⸻
+
+🔹 Related Deployment
+
+If correlated within time window.
+Click → /deployments/:deploymentId
+
+⸻
+
+🚨 4️⃣ Alert Cross-Linking
+
+On /alerts/:alertId
+
+Add:
+
+🔹 Linked Incident
+
+If escalation happened:
+Click → Incident page
+
+⸻
+
+🔹 Related Errors
+
+Clustered errors triggered by this alert.
+
+⸻
+
+🔹 Impacted Service & Node
+
+Click → service or node view
+
+⸻
+
+🔹 Other Alerts in Same Window
+
+Show possible cascading pattern.
+
+⸻
+
+🧨 5️⃣ Error Cross-Linking
+
+On /errors/:errorId
+
+Add:
+
+🔹 Related Incident
+
+If error cluster caused incident.
+
+⸻
+
+🔹 Triggering Alert
+
+If alert was raised due to this error spike.
+
+⸻
+
+🔹 Affected Transactions
+
+Clickable list.
+
+⸻
+
+🔹 Affected Nodes
+
+Clickable infrastructure mapping.
+
+⸻
+
+🔹 Similar Historical Errors
+
+Click → historical incident or alert.
+
+⸻
+
+🖥 6️⃣ Node / Server Cross-Linking
+
+On /nodes/:nodeId
+
+Show:
+	•	Active alerts on this node
+	•	Errors originating from this node
+	•	Incidents affecting this node
+	•	Transactions hosted on this node
+	•	Resource metrics timeline
+
+Everything clickable.
+
+⸻
+
+🔄 7️⃣ Bi-Directional Linking Rules
+
+If A links to B → B must link back to A.
+
+Example:
+If Incident shows Alert → Alert page shows that Incident.
+
+No dead ends.
+
+⸻
+
+🧠 8️⃣ AI Correlation Insights Panel
+
+Every detail page should include:
+
+AI Correlation Summary
+
+Example:
+
+“This incident is strongly correlated (89%) with a database latency spike on Node DB-01 and a deployment 14 minutes prior.”
+
+Include:
+	•	Correlation strength score
+	•	Confidence %
+	•	Evidence list
+	•	Suggested navigation shortcuts
+
+Add quick action buttons:
+	•	View Related Errors
+	•	Compare With Previous Incident
+	•	Analyze Node Health
+
+⸻
+
+🗺 9️⃣ Visual Correlation Graph
+
+Add a graph view toggle:
+
+Incident
+↕
+Alerts
+↕
+Errors
+↕
+Transactions
+↕
+Nodes
+
+Interactive nodes:
+	•	Click to navigate
+	•	Hover shows summary
+	•	Color coded by severity
+
+⸻
+
+📊 🔟 Smart Filtering Across Modules
+
+When user selects:
+	•	A time range → applied globally
+	•	A service → filters all modules
+	•	A node → filters alerts/errors/incidents
+
+Global filters persist while navigating.
+
+⸻
+
+🧪 11️⃣ Correlation Scoring Model
+
+Each relationship should include:
+
+{
+  "relatedEntityId": "ERR-221",
+  "correlationScore": 0.87,
+  "correlationType": "time+service+cluster"
+}
+
+Use scoring to sort related entities by relevance.
+
+⸻
+
+🗂 12️⃣ Backend API Extensions
+
+Add unified correlation endpoints:
+
+GET /api/incidents/:id/related
+GET /api/alerts/:id/related
+GET /api/errors/:id/related
+GET /api/nodes/:id/related
+GET /api/correlation/graph?entityId=:id&type=:type
+
+Response format:
+
+{
+  "incidents": [],
+  "alerts": [],
+  "errors": [],
+  "transactions": [],
+  "nodes": [],
+  "deployments": []
+}
+
+
+⸻
+
+🎨 13️⃣ UX Requirements (Very Important)
+
+Make it feel:
+
+✔ Clean
+✔ Non-overwhelming
+✔ Context aware
+✔ Actionable
+✔ Guided
+
+Use:
+	•	Collapsible related sections
+	•	Tabs for grouping
+	•	Badges with counts
+	•	Hover previews
+	•	Breadcrumb navigation
+	•	“Back to Context” button
+
+⸻
+
+🧩 14️⃣ Breadcrumb Trail
+
+Example:
+
+Home > Incidents > INC-1023 > Related Errors > ERR-221
+
+User always knows where they came from.
+
+⸻
+
+🤖 15️⃣ AI Smart Suggestions
+
+On every page, AI should recommend:
+
+“You may also want to review:
+• Deployment #D-443
+• Node DB-01
+• Incident INC-998 (similar pattern)”
+
+Clickable shortcuts.
+
+⸻
+
+🚀 End State Vision
+
+The system should feel like:
+	•	A living map of your application
+	•	Everything interconnected
+	•	No siloed dashboards
+	•	Intelligent guidance
+	•	Minimal clicks to find root cause
+
+User journey example:
+
+Incident
+→ Click related Alert
+→ See correlated Error
+→ Click affected Node
+→ See resource spike
+→ Click deployment
+→ Identify change
+→ Confirm root cause
+
+Seamless. Intelligent. Fast.

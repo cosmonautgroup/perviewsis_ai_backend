@@ -1,0 +1,352 @@
+
+🚨 AI-Powered Alert & Error Detail Page
+
+When a user clicks on an Alert or Error, navigate to a full deep-dive analysis page similar to the Incident view.
+
+⸻
+
+🔁 Navigation
+
+From:
+	•	/alerts
+	•	/errors
+
+To:
+	•	/alerts/:alertId
+	•	/errors/:errorId
+
+These pages must provide:
+
+✔ Deep context
+✔ AI-driven analysis
+✔ Affected transactions
+✔ Root cause hypothesis
+✔ Correlation mapping
+✔ Drill-down debugging capability
+
+⸻
+
+🧠 1️⃣ AI-Powered Alert Detail Page
+
+Route:
+
+/alerts/:alertId
+
+⸻
+
+🔷 Layout Structure
+
+🧾 Section 1: Alert Summary Header
+
+Display:
+	•	Alert Name
+	•	Source (AppDynamics / Dynatrace / OTel)
+	•	Severity (Critical / High / Medium / Low)
+	•	Status (Active / Acknowledged / Resolved)
+	•	Triggered Health Rule
+	•	Trigger Time
+	•	Duration
+	•	AI Risk Score (0–100)
+	•	AI Escalation Probability (%)
+
+⸻
+
+📊 Section 2: Health Rule & Trigger Details
+
+Show:
+	•	Threshold breached
+	•	Metric value at breach
+	•	Baseline vs current comparison
+	•	Entity affected (service / node / DB)
+	•	Evaluation window
+
+Example:
+
+Health Rule: High Error Rate
+Threshold: > 5%
+Current: 12.4%
+Baseline: 2.1%
+
+
+⸻
+
+🔍 Section 3: Affected Business Transactions
+
+Display:
+
+Transaction	Error Rate	Avg Response Time	Impact Level
+
+
+Clickable → drill further into transaction performance.
+
+⸻
+
+🧠 Section 4: AI Root Cause Analysis
+
+AI should analyze:
+	•	Metric anomalies
+	•	Related error patterns
+	•	Infrastructure signals
+	•	Deployment changes
+	•	Correlated alerts
+	•	Time-based spikes
+
+Output:
+
+Primary Hypothesis
+	•	Most probable root cause
+	•	Confidence %
+
+Contributing Factors
+	•	Secondary indicators
+
+Evidence Used
+	•	Error clusters
+	•	CPU spike
+	•	DB latency
+	•	Recent deployment
+
+⸻
+
+🔄 Section 5: Correlated Signals Panel
+
+Show related:
+	•	Errors
+	•	Logs
+	•	Metrics spikes
+	•	Other alerts
+	•	Incidents
+
+Visual correlation timeline:
+	•	Overlay alert trigger
+	•	Error spike
+	•	Infrastructure metrics
+
+⸻
+
+📈 Section 6: AI Prediction & Impact Forecast
+
+Display:
+	•	Probability of recurrence in next 24h / 72h
+	•	Estimated business impact
+	•	Risk to SLA
+	•	Risk to revenue (if applicable)
+
+Example:
+
+Recurrence probability: 68%
+Potential revenue impact: High
+SLA breach risk: 74%
+
+
+⸻
+
+🛠 Section 7: AI Suggested Remediation
+
+Provide:
+	•	Immediate actions
+	•	Long-term fixes
+	•	Configuration changes
+	•	Infrastructure scaling recommendations
+	•	Code-level hints (if stack trace available)
+
+Each recommendation includes:
+	•	Impact score
+	•	Confidence level
+
+⸻
+
+⸻
+
+🔥 2️⃣ AI-Powered Error Detail Page
+
+Route:
+
+/errors/:errorId
+
+⸻
+
+🔷 Layout Structure
+
+⸻
+
+🧾 Section 1: Error Summary
+
+Display:
+	•	Error Type (5xx / Timeout / DB / Dependency)
+	•	Source
+	•	First Occurrence
+	•	Last Occurrence
+	•	Frequency
+	•	Affected Service
+	•	Affected Node
+	•	AI Severity Score
+
+⸻
+
+📋 Section 2: Error Details
+
+Show:
+	•	Full error message
+	•	Stack trace
+	•	HTTP code
+	•	Request path
+	•	User impact count
+	•	Geographic distribution (if available)
+
+⸻
+
+📊 Section 3: Error Pattern & Cluster
+
+Show:
+	•	Cluster ID
+	•	Similar errors
+	•	Frequency trend
+	•	Spike detection graph
+
+AI should:
+	•	Group similar stack traces
+	•	Identify repeating patterns
+	•	Detect anomaly vs baseline
+
+⸻
+
+🧠 Section 4: AI Root Cause Hypothesis
+
+AI analyzes:
+	•	Message similarity
+	•	Dependency latency
+	•	Upstream failures
+	•	Memory leaks
+	•	CPU spikes
+	•	Thread pool exhaustion
+
+Output:
+
+Primary root cause hypothesis
+Confidence %
+Supporting metrics
+Supporting logs
+
+⸻
+
+🔎 Section 5: Transaction Impact Mapping
+
+Display:
+
+Business Transaction	Impacted Calls	Error Rate	Revenue Impact
+
+
+Click → Drill into that transaction.
+
+⸻
+
+🔄 Section 6: Dependency Map
+
+Visual graph:
+
+Error → Service → DB → External API
+
+Highlight where failure originated.
+
+⸻
+
+📈 Section 7: AI Future Risk Prediction
+
+Predict:
+	•	Likelihood of escalation to incident
+	•	Error spike probability
+	•	Downstream cascade risk
+
+Include confidence score.
+
+⸻
+
+🧪 Section 8: AI Debug Assistant
+
+Interactive AI panel where user can:
+	•	Ask: “Why is this happening?”
+	•	Ask: “What changed before this error?”
+	•	Ask: “Is this related to yesterday’s deployment?”
+	•	Ask: “Show me similar historical incidents”
+
+This assistant uses:
+	•	Error history
+	•	Alert history
+	•	Deployment metadata
+	•	Metric baselines
+
+⸻
+
+🔁 Shared Capabilities (Alerts & Errors)
+
+Both pages should support:
+
+✔ Drill into transaction
+✔ Drill into infrastructure node
+✔ Drill into correlated alerts
+✔ Compare against previous occurrences
+✔ Export summary (PDF/JSON)
+✔ Mark as resolved / acknowledge
+
+⸻
+
+🧩 Backend API Extensions
+
+Add:
+
+GET /api/alerts/:id/ai-analysis
+GET /api/errors/:id/ai-analysis
+GET /api/errors/:id/correlated
+GET /api/alerts/:id/correlated
+GET /api/errors/:id/predictions
+
+Example AI analysis response:
+
+{
+  "primaryRootCause": "Database connection pool exhaustion",
+  "confidence": 0.82,
+  "contributingFactors": [
+    "High DB latency",
+    "Increased concurrent transactions",
+    "Recent deployment"
+  ],
+  "recurrenceProbability": 0.68,
+  "suggestedActions": [
+    "Increase DB pool size",
+    "Review slow queries",
+    "Scale DB vertically"
+  ]
+}
+
+
+⸻
+
+🎨 UX Expectations
+	•	Clean enterprise dashboard layout
+	•	Tabs:
+	•	Overview
+	•	AI Analysis
+	•	Transactions
+	•	Metrics
+	•	Logs
+	•	Dependencies
+	•	Clear confidence scoring
+	•	Color-coded severity & risk
+	•	Timeline visualizations
+	•	Graph overlays for correlation
+
+⸻
+
+🎯 End Goal
+
+The user should:
+	•	Start from alert/error
+	•	Understand impact within seconds
+	•	See probable root cause
+	•	Validate via correlated evidence
+	•	Drill down to debug
+	•	Take action confidently
+
+This makes your platform feel like an AI Observability Command Center, not just a monitoring UI.
+

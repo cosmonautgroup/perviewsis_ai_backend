@@ -1,0 +1,202 @@
+Build an AI-Based Observability Platform that provides causal analysis, forecasting, autonomous recommendations, and deep insights into application and infrastructure health.
+
+The platform must let users:
+	•	See the state of all monitored applications
+	•	Drill into specific applications with rich dashboards
+	•	Get AI-powered causal, forecasting, and recommendation insights
+	•	Navigate both application and infrastructure views at multiple levels
+
+⸻
+
+🧱 CORE OBJECTIVE
+
+The goal of this prototype module is to:
+
+✔ List monitored applications
+✔ Allow deep drilldown into application status
+✔ Show both application & infrastructure health in unified dashboards
+✔ Deliver AI insights: causal inference, forecasting (predictive), autonomous recommendations
+✔ Highlight future problems and actionable recommendations
+
+⸻
+
+🧭 USER JOURNEY REQUIREMENTS
+
+⸻
+
+📌 1️⃣ Application List View
+
+Route
+/applications
+
+UI Must Show:
+	•	List of all registered applications
+	•	Search & filter
+	•	Status indicator for each:
+	•	Healthy
+	•	Warning
+	•	Critical
+	•	Summary for each app:
+	•	Current response time
+	•	Error rate
+	•	Throughput
+	•	Forecast risk
+	•	Clicking an app navigates to:
+/applications/:id/dashboard
+
+⸻
+
+📌 2️⃣ Application Dashboard (Deep Dive)
+
+Route
+/applications/:id/dashboard
+
+Must Include:
+📊 Overview Panel – Top Summary
+	•	App Name + Environment
+	•	Health Status
+	•	Key Metrics (last 24h):
+	•	Response time
+	•	Error rate
+	•	Throughput
+	•	SLA risk score
+	•	Forecast risk:
+	•	“High probability of SLA breach in next X hours”
+	•	AI Confidence score
+
+⸻
+
+🗂 Tab Structure
+
+TAB 1 — SERVICES VIEW
+⚙️ Shows:
+	•	List of services within application
+	•	Service status distribution (Healthy / Warning / Critical)
+	•	Slowest services
+	•	Services producing errors
+	•	HTTP errors by category
+	•	Dependency errors (DB, cache, external API)
+
+📌 Must Show:
+	•	What services broke
+	•	Which services are expected to break in next 3 months
+	•	AI forecasting + trend analysis
+	•	Recommendations for each risk
+	•	Autoscaling
+	•	Code optimization
+	•	Dependency improvements
+
+📌 AI Insights for Services:
+	•	Rank services by risk of failure
+	•	Provide root-cause hypothesis
+	•	Provide confidence score
+	•	Provide next-best actions
+
+⸻
+
+TAB 2 — INFRASTRUCTURE VIEW
+🖥️ Shows:
+	•	Servers / Pods related to this application
+	•	Infrastructure status distribution (Healthy / Warning / Critical)
+	•	List of most problematic servers/pods
+
+Must Show:
+	•	Servers facing slowness
+	•	Servers receiving errors
+	•	Problem types by category:
+	•	CPU
+	•	Memory
+	•	Disk
+	•	Network
+	•	Process failures
+	•	Servers expected to fail in next 3 months
+	•	Include AI forecasting + trend curves
+	•	Provide Recommendations
+
+⸻
+
+📌 Cross-Entity Problem Analysis
+
+For both Services & Infrastructure:
+	•	Display list of related problems
+	•	Timeline projections
+	•	When issues are expected to occur
+	•	AI priority scoring
+	•	AI Recommendations
+	•	How to mitigate before occurrence
+
+⸻
+
+🖥️ 3️⃣ Infrastructure Level Drilldown
+
+Route
+/applications/:id/servers
+
+Shows:
+	•	List of servers associated with this app
+	•	Status pie chart:
+	•	#Healthy
+	•	#Critical
+	•	#Warnings
+
+⸻
+
+📌 3.1 Server Details Page
+
+Route
+/applications/:id/servers/:serverId
+
+Must Include:
+📌 Server Health Summary
+	•	Name / IP / Role
+	•	Status
+	•	Last sync time
+	•	Alerts summary
+
+📊 Resource Utilization & Forecasting
+	•	CPU (current + forecasted)
+	•	Memory (current + forecasted)
+	•	Disk (current + forecasted)
+	•	Network (current + forecasted)
+	•	Projected saturation date
+
+📌 Process List
+	•	All running processes
+	•	CPU / memory usage per process
+	•	Processes with anomalies
+
+📌 Problem List
+	•	Real problems
+	•	Future problems based on forecasting
+
+📌 Causal Insights
+	•	AI analysis of:
+	•	CPU + latency correlations
+	•	Memory + GC pattern impact
+	•	Process failures + service issues
+	•	Root cause hypotheses
+
+📌 Forecasting
+	•	24h / 72h / 3 months
+	•	Confidence bands
+	•	SLA risk
+
+📌 Recommendations
+	•	Scaling advice
+	•	Tuning suggestions
+	•	Automation triggers
+
+⸻
+
+🧠 AI INTELLIGENCE LAYER
+
+⸻
+
+🤖 Causal Engine
+
+The platform must infer:
+	•	Correlations between metrics
+	•	Sequences of events that lead to degradation
+	•	Root cause cluster hypotheses
+
+Example:

@@ -1,0 +1,282 @@
+
+📊 AI‑POWERED CAPACITY PLANNING MODULE
+
+Purpose: Give users deep insight into future resource needs, possible bottlenecks, and actionable recommendations — across applications, services, infrastructure nodes, clusters, and related entities — all tied seamlessly with incident/alert/error data.
+
+⸻
+
+🧠 GOAL
+
+Provide a capacity planning dashboard that:
+	•	Forecasts future infrastructure and service needs
+	•	Projects saturation timelines (CPU, Memory, Disk, Network)
+	•	Flags potential capacity issues before they happen
+	•	Suggests scaling and provisioning recommendations
+	•	Correlates with alerts, errors, and incidents
+	•	Allows drill-down from any level (application → servers → services → nodes)
+	•	Uses AI models + historical usage + trend forecasting
+
+Capacity planning functionality should be available at these levels:
+	1.	Application Level
+	2.	Service Level
+	3.	Server/Node Level (Infrastructure)
+	4.	Cluster/Environment Level
+	5.	Cross‑Application Portfolio View
+
+⸻
+
+📍 USER JOURNEY: CAPACITY PLANNING
+
+⸻
+
+🧭 1️⃣ Global Capacity Planning Entry
+
+Route
+/capacity-planning
+
+Dashboard Components:
+	•	Overall resource utilization
+	•	Forecasted resource needs (next 24h / 72h / 1 month / 3 months)
+	•	Saturation risk alerts
+	•	Predicted incidents due to capacity
+	•	Headroom percentage
+	•	Trend curves for:
+	•	CPU
+	•	Memory
+	•	Disk I/O
+	•	Network throughput
+	•	Request volume
+	•	Error budgets
+
+AI Insights Panel:
+	•	Predicted resource exhaustion events
+	•	Confidence level (%)
+	•	Recommended scaling strategy
+	•	Correlated business traffic forecasts
+
+⸻
+
+📊 2️⃣ Application Level Capacity View
+
+Route
+/applications/:appId/capacity
+
+Show:
+	•	Current resource usage for the application
+	•	Application traffic growth curve
+	•	Forecasted load
+	•	Saturation probability timeline
+	•	Impact on SLA / Business KPIs
+
+Drill‑downs:
+	•	View services under this app
+	•	See server/node capacity breakdown
+	•	Related alerts + errors causing capacity stress
+	•	Forecasted incidents related to capacity spikes
+
+AI Features:
+	•	Predict “peak usage windows” based on historical trend patterns and business calendars
+	•	Suggest capacity buffers required (e.g., 20% headroom rule)  
+	•	Identify high‑impact bottlenecks
+
+⸻
+
+🧠 3️⃣ Service‑Level Capacity Planning
+
+Route
+/applications/:appId/services/:serviceId/capacity
+
+Here you focus on how each service is expected to consume resources.
+
+Display:
+	•	CPU / Memory trends specific to the service
+	•	Request rate growth
+	•	Error rate correlation with load
+	•	Service saturation forecast
+
+AI Predictions:
+	•	Whether service will hit capacity limits within next time horizon
+	•	Confidence bands
+	•	Suggested auto‑scaling policies
+
+⸻
+
+🖥️ 4️⃣ Server / Node Capacity View
+
+Route
+/nodes/:nodeId/capacity
+
+Show:
+	•	CPU utilization trend
+	•	Memory utilization trend
+	•	Disk I/O trend
+	•	Network throughput trend
+	•	Historical workloads with patterns
+	•	Seasonal usage curves
+
+Forecast:
+	•	When the node is projected to hit critical thresholds
+	•	Suggested action (e.g., add more memory, move workloads)  
+	•	Saturation risk within next X hours/weeks
+
+AI Features:
+	•	Predict when node will need:
+	•	Vertical scaling (bigger instance)
+	•	Horizontal scaling (more nodes / pods)
+	•	Suggest optimized node pools or instance types
+
+⸻
+
+📈 5️⃣ Cluster / Environment Capacity
+
+Route
+/capacity-planning/cluster/:clusterId
+
+For Kubernetes or cloud clusters.
+
+Components:
+	•	Node pool status
+	•	Allocatable vs used resources
+	•	Pod resource requests vs actual usage
+	•	Pending pods / Throttling events
+	•	Autoscaler activity
+
+Forecast:
+	•	When cluster capacity will require new nodes
+	•	Buffer headroom needed based on trend growth  
+
+AI Features:
+	•	Cluster‑wide optimization recommendations
+	•	Simulate workload growth scenarios
+	•	Suggest scaling policies (HPA / VPA / Cluster Autoscaler)
+
+⸻
+
+🧠 AI FORECASTING & SMART CAPACITY INSIGHTS
+
+Capacity planning should use both:
+
+📌 Historical Pattern Analysis
+	•	Recognize seasonal trends
+	•	Identify peak usage patterns
+	•	Calculate growth curves for key metrics (CPU, Memory, etc.)  
+
+📌 AI‑Driven Prediction
+	•	Use time‑series forecasting (e.g., linear regression, ARIMA/SARIMA, ML techniques)  
+	•	Expose forecast with confidence intervals
+	•	Predict likelihood of SLA breach due to capacity constraints
+	•	Suggest priority actions based on risk scores
+
+Display Forecast Graphs:
+	•	Projected CPU
+	•	Memory capacity
+	•	Disk utilization
+	•	Network bandwidth
+	•	Workload demand growth
+
+⸻
+
+🔄 CROSS‑MODULE DRILL‑DOWN & CORRELATION
+
+Capacity planning must be interlinked with:
+
+🟢 Incidents
+	•	Show which incidents were caused due to capacity saturation
+	•	Forecast which incidents are likely if capacity trends continue
+
+Example:
+
+Incident: High latency spike 
+Cause: CPU saturation on server node 
+Forecast: CPU will exceed threshold within 12 hours
+
+🔴 Alerts
+	•	Link high resource usage alerts to capacity projections
+	•	If alert occurs repeatedly, factor into forecasting model
+
+⚠️ Errors
+	•	Show how continued resource constraint correlates with increased error rates
+	•	Suggest actions based on error trends
+
+👤 Services
+	•	Drill from service profile to capacity risks and recommendations
+
+🧾 Transactions
+	•	Relate business transaction growth with capacity demand
+
+⸻
+
+📊 AI‑ENHANCED RECOMMENDATIONS
+
+Each forecast must include:
+
+✔ Suggested time to scale
+✔ Recommended resource change
+✔ Estimated cost impact
+✔ Confidence score
+✔ Severity level
+
+Example:
+
+Prediction: Node CPU will cross 85% in 8 hours  
+Confidence: 90%  
+Recommendation: Add 2 nodes or scale horizontally  
+Business impact: Potential 15% increase in error rate if not scaled
+
+
+⸻
+
+🧠  CAPACITY PLANNING UI PANELS
+
+📍 Summary View (Global)
+	•	Carousel of forecasted risk cards
+	•	Slider to choose forecast horizon (24h / 72h / 1 week / 3 months)
+	•	Top 5 risk items
+
+📍 Per‑Entity Panel (App / Service / Node)
+	•	Real‑time status
+	•	Forecast graph
+	•	Recommendation panel
+	•	“Take action” buttons (scale, autoscale rules, schedule scaling)
+
+⸻
+
+📡 CAPACITY PLANNING API EXTENSIONS
+
+Add endpoints:
+
+GET /api/capacity-planning/global
+GET /api/capacity-planning/applications/:appId
+GET /api/capacity-planning/services/:serviceId
+GET /api/capacity-planning/nodes/:nodeId
+GET /api/capacity-planning/cluster/:clusterId
+
+Response example:
+
+{
+  "forecast": {
+    "metric": "cpu",
+    "trend": [...],
+    "forecast": [...],
+    "confidence": 0.87
+  },
+  "recommendations": [...],
+  "riskScore": 79
+}
+
+
+⸻
+
+🎯 END GOAL
+
+Capacity planning should be more than graphs — it must be:
+
+✔ Predictive
+✔ AI‑driven
+✔ Correlated with incidents, alerts, errors
+✔ Drillable from application to infra
+✔ Actionable with clear recommendations
+✔ Forecasting based on historical behavior and trend analysis
+
+This makes your observability platform proactive rather than reactive — letting users plan ahead and optimize costs/performance intelligently.  
+

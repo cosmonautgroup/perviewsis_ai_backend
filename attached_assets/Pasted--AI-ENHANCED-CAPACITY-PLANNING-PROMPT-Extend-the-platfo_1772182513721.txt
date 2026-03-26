@@ -1,0 +1,377 @@
+
+
+📊 AI‑ENHANCED CAPACITY PLANNING PROMPT
+
+Extend the platform’s Capacity Planning module so it is not a standalone view — but a deeply correlated, contextual system that surfaces capacity risk with links into incidents, alerts, errors, services, infrastructure nodes, transactions, and business impact.
+
+⸻
+
+⚡ DESIGN PRINCIPLES
+
+✔ Capacity Planning must be predictive, contextual, and actionable
+✔ Users must be able to navigate from capacity risk → root cause → remediation
+✔ Capacity signals must be correlated with:
+	•	Alerts
+	•	Errors
+	•	Incidents
+	•	Services
+	•	Servers / Nodes
+	•	Business Transactions
+	•	Deployments
+
+✔ All links are clickable and drillable
+
+⸻
+
+🧭 USER JOURNEY: CAPACITY PLANNING
+
+⸻
+
+1️⃣ GLOBAL CAPACITY PLANNING DASHBOARD
+
+Route
+/capacity-planning
+
+This is the landing page for capacity planning where users see:
+
+📌 Forecast Risk Summary
+	•	Probability of saturation (CPU / Memory / Disk / Network)
+	•	Forecast windows (24h / 72h / 1 week / 3 months)
+	•	Confidence %
+	•	Business impact estimate
+
+📌 Top Risk List
+List items like:
+	•	Service A expected CPU constraint in 12h
+	•	Node X memory saturation in 48h
+	•	Application Y throughput limitation next 3 days
+
+Each item has:
+	•	Risk label
+	•	Severity
+	•	Confidence
+	•	Link: “View Details”
+→ /capacity-planning/detail/:riskId
+
+📌 Correlation Map
+Visual graph connecting:
+	•	Capacity risk
+	•	Active/past alerts
+	•	Related errors
+	•	Incidents
+	•	Services
+	•	Nodes
+
+Click any node to drill deeper.
+
+⸻
+
+🧠 2️⃣ CAPACITY DETAIL PAGE
+
+Route
+/capacity-planning/detail/:riskId
+
+This page focuses on one specific capacity risk.
+
+🔹 Header Summary
+	•	Risk name: “CPU saturation risk – Service A”
+	•	Risk type (CPU / Memory / Disk / Network)
+	•	Affected entity (Service / Node / App)
+	•	Forecast window
+	•	Confidence %
+	•	Impact category (Performance / Error / Incident Risk / SLA / Business)
+
+🔹 Forecast Graphs
+
+Interactive time series showing:
+	•	Current usage
+	•	Forecast usage
+	•	Confidence bands
+	•	Threshold crossing mark
+
+Graph types:
+	•	CPU forecast
+	•	Memory forecast
+	•	Disk I/O forecast
+	•	Network load forecast
+
+Users can toggle time window.
+
+⸻
+
+🔗 CROSS‑MODULE CORRELATION PANELS
+
+Users must be able to go from capacity risk to related items:
+
+⸻
+
+➤ A) RELATED INCIDENTS
+
+Section: “Incidents likely impacted by this risk”
+
+List with:
+	•	Incident ID
+	•	Severity
+	•	Impacted services
+	•	Timestamp of swimlane overlap
+	•	Confidence % that they are related
+
+Click → /incidents/:incidentId
+
+AI Tip:
+“Historical incidents with CPU saturation showed recurrence 60% within same forecast window.”
+
+⸻
+
+➤ B) RELATED ALERTS
+
+Section: “Capacity and threshold alerts”
+
+Show:
+	•	Alert name
+	•	Source (AppDynamics / Dynatrace / OTel)
+	•	Severity
+	•	Metric breached
+	•	Time
+	•	Link → /alerts/:alertId
+
+⸻
+
+➤ C) RELATED ERRORS
+
+Section: “Errors correlated to resource stress”
+
+List:
+	•	Error cluster
+	•	Frequency trend
+	•	Affected service
+	•	Time range overlap
+	•	Severity
+	•	Confidence
+
+Click → /errors/:errorId
+
+AI Tip:
+“Network timeout errors spiked concurrently with CPU climbs > 75%.”
+
+⸻
+
+➤ D) IMPACTED TRANSACTIONS
+
+Section: “Business transactions affected by capacity risk”
+
+Metrics:
+	•	Transaction name
+	•	Response time trend
+	•	Error % trend
+	•	Impact score (business KPI)
+	•	Link → /transactions/:transactionId
+
+⸻
+
+➤ E) SERVICES & NODES
+
+Show two subpanels:
+
+Service Panel
+	•	Service name
+	•	Resource trend
+	•	Forecast risk
+	•	Link → /applications/:appId/services/:serviceId/capacity
+
+Node Panel
+	•	Node name
+	•	Current utilization
+	•	Forecast risk
+	•	Link → /nodes/:nodeId/capacity
+
+AI Tip:
+“For Node DB‑X, memory forecast crosses threshold in next 36 hours with 78% confidence.”
+
+⸻
+
+🧠 AI‑POWERED RECOMMENDATIONS
+
+Alongside correlation, provide actionable suggestions:
+
+⸻
+
+Capacity Remediation Suggestions
+
+Each with:
+	•	Title
+	•	Description
+	•	Expected impact
+	•	Confidence %
+
+Examples:
+
+Recommendation: Add 2 nodes to Cluster A
+Impact: Reduces CPU constraint risk by 92%
+Confidence: 0.87
+
+Recommendation: Scale Service A horizontally by 3 pods
+Impact: Eliminates forecasted CPU saturation
+Confidence: 0.85
+
+Recommendation: Increase memory limits on Node X
+Impact: Reduces memory saturation risk
+Confidence: 0.78
+
+
+⸻
+
+📈 AI FORECAST SCENARIOS
+
+Add scenario toggles:
+	•	Optimistic — minimal growth
+	•	Baseline — current trend continues
+	•	Pessimistic — spike = trending high
+
+Each scenario shows:
+	•	Threshold crossing time
+	•	Confidence interval
+	•	Risk level
+
+⸻
+
+🧩 RISK DRILLDOWN PANELS
+
+Below capacity detail, add tabs:
+
+⸻
+
+🧾 Tab — Resource Metrics
+
+Graphs:
+	•	CPU trend
+	•	Memory trend
+	•	Disk I/O
+	•	Network throughput
+	•	Request load
+
+⸻
+
+🚨 Tab — Related Alerts
+
+Same cards as alerts dashboard, but filtered by time + entity.
+
+⸻
+
+🔍 Tab — Errors
+
+Clustered error list.
+
+⸻
+
+📊 Tab — Incidents
+
+List relevant incidents with timeline sync.
+
+⸻
+
+💡 Tab — AI Insights
+
+Highlight:
+	•	Correlation summary
+	•	Root causes
+	•	Forecast narrative
+
+Example:
+
+AI Narrative:
+Application Y’s CPU trend has been increasing 7% week‑over‑week with correlated memory fragmentation spikes.
+This increases risk of degraded response time and backend timeouts if not scaled before 72 hours.
+
+
+⸻
+
+🔁 SMART NAVIGATION & BI‑DIRECTIONAL LINKS
+
+Anywhere there is a linked entity:
+	•	Incident → Capacity risk
+	•	Error → Capacity risk
+	•	Alert → Capacity risk
+	•	Service / Node → Capacity detail
+
+Make navigation bidirectional:
+
+Example:
+	•	From /incidents/:incidentId
+→ “Capacity risks affecting this incident”
+→ Click → capacity detail
+	•	From /alerts/:alertId
+→ “Capacity risks with correlated alert pattern”
+→ Click → capacity detail
+	•	From /errors/:errorId
+→ “Forecasted saturation tied to this error cluster”
+→ Click → capacity detail
+
+⸻
+
+🧠 BACKEND API EXTENSIONS
+
+Extend capacity planning with endpoints that return correlation data:
+
+GET /api/capacity-planning
+GET /api/capacity-planning/:riskId
+GET /api/capacity-planning/:riskId/related-incidents
+GET /api/capacity-planning/:riskId/related-alerts
+GET /api/capacity-planning/:riskId/related-errors
+GET /api/capacity-planning/:riskId/related-transactions
+GET /api/capacity-planning/:riskId/related-services-nodes
+
+Response format example:
+
+{
+  "riskId": "...",
+  "entityType": "service",
+  "entityId": "...",
+  "forecast": [...],
+  "relatedIncidents": [...],
+  "relatedAlerts": [...],
+  "relatedErrors": [...],
+  "relatedTransactions": [...],
+  "relatedServices": [...],
+  "relatedNodes": [...],
+  "aiNarrative": "...",
+  "recommendations": [...]
+}
+
+
+⸻
+
+🎨 UX REQUIREMENTS
+
+Global UI Elements:
+	•	Risk cards with quick links
+	•	Color codes:
+	•	Green = low
+	•	Yellow = medium
+	•	Orange = high
+	•	Red = critical
+	•	“Jump to Related” CTA buttons
+	•	Time range selector
+	•	Scenario selector
+
+Visualization Patterns:
+	•	Forecast + actual utilization line graphs
+	•	Correlation timelines showing simultaneous spikes
+	•	Entity cards with drilldown arrows
+	•	AI narrative text with icons
+	•	Sticky side panel with next suggested actions
+
+⸻
+
+🎯 FINAL OUTCOME
+
+This upgraded capacity planning experience must:
+
+✔ Predict resource constraints with confidence
+✔ Link to related alerts, errors, incidents, services, and nodes
+✔ Provide drilldown navigation in every direction
+✔ Offer AI recommendations & narrative explanations
+✔ Help users take proactive actions
+
+This turns your capacity planning feature into a strategic planning tool, not just a pretty graph.
+

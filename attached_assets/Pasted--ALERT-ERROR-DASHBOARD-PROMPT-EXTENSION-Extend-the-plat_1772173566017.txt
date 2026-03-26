@@ -1,0 +1,317 @@
+
+
+🚨 ALERT & ERROR DASHBOARD PROMPT EXTENSION
+
+Extend the platform with centralized Alert and Error Dashboards that:
+
+✔ Correlate alerts across multiple telemetry sources
+✔ Show error breakdowns and trends
+✔ Summarize health rule violations
+✔ Provide AI insights for patterns, root causes, and forecasting
+
+⸻
+
+🧭 USER JOURNEY: ALERT & ERROR DASHBOARDS
+
+⸻
+
+📌 1️⃣ Alerts Dashboard
+
+Route
+
+/alerts
+
+Purpose
+
+A unified view of alerts from:
+	•	AppDynamics
+	•	Dynatrace
+	•	OpenTelemetry-based events
+	•	Future integrations (New Relic, SolarWinds, etc.)
+
+UI Components
+
+📍 Summary Header
+	•	Total active alerts
+	•	Alerts by severity:
+	•	Critical
+	•	High
+	•	Medium
+	•	Low
+	•	Alerts by source (AD, DT, OTel)
+	•	Alerts in last 24h / 7d
+
+⸻
+
+📍 Alerts Table
+
+Columns:
+
+Alert ID	Source	Severity	Entity	Time	Status	AI Risk Score
+
+
+	•	Status: Active / Acknowledged / Resolved
+	•	AI Risk Score: A calculated score indicating the likelihood the alert will escalate into an incident
+
+Click an alert → open Alert Detail View
+
+⸻
+
+📍 Alert Filters
+	•	Source
+	•	Severity
+	•	Status
+	•	Application
+	•	Time range
+
+⸻
+
+🔍 2️⃣ Alert Detail View
+
+Route
+
+/alerts/:alertId
+
+Show:
+	•	Alert metadata
+	•	Source system (AppDynamics / Dynatrace / OTel)
+	•	Triggering health rule
+	•	Alert description
+	•	Affected entities (services, servers)
+	•	Linked incidents
+	•	Related errors
+
+⸻
+
+📊 AI Insights for Alerts
+
+🧠 Alert Correlation
+Group related alerts by:
+	•	Time proximity
+	•	Same application / service
+	•	Shared error patterns
+	•	Shared infrastructure components
+
+Display groups visually.
+
+⸻
+
+📈 Alert Prediction
+Use AI to forecast:
+	•	Alerts expected in the next 24h / 72h
+	•	Risk of escalation to an incident
+
+Show:
+	•	Forecast chart
+	•	Confidence % bands
+
+⸻
+
+🧪 Alert Recommendations
+For each alert:
+	•	Suggested next actions
+	•	Likely root causes
+	•	Severity justification
+
+Example:
+
+IF Memory utilization > 85% AND repeated Garbage Collection warnings
+→ Suggest increasing heap limits OR analyzing memory leaks
+
+
+⸻
+
+📊 3️⃣ Error Dashboard
+
+Route
+
+/errors
+
+Purpose
+
+Display a centralized view of errors from:
+	•	AppDynamics business transactions
+	•	Dynatrace error events
+	•	OpenTelemetry logs
+	•	Custom rule violations
+
+⸻
+
+📍 Error Summary Header
+	•	Total error count
+	•	Errors by type
+	•	5xx
+	•	Timeouts
+	•	Database errors
+	•	Dependency errors
+	•	Client errors
+	•	Errors by source
+	•	Errors by application
+
+⸻
+
+📍 Error Trends
+
+Show trend charts:
+	•	Error rate over time
+	•	Top error spikes
+	•	Errors by service/component
+
+Use:
+	•	Recharts
+	•	Time range selector (last 1h, 24h, 7d)
+
+⸻
+
+📌 Error Classification & AI Analysis
+
+🧠 Error Clustering
+
+Group errors into clusters using:
+	•	Error message similarity
+	•	Stack trace patterns
+	•	Affected service/component
+	•	Time proximity
+
+Assign cluster labels and show example error messages per cluster.
+
+⸻
+
+📈 AI Enrichment
+
+For each cluster:
+	•	Suggest probable root cause
+	•	Predict future error spikes
+	•	Classify severity levels
+	•	Provide confidence score
+
+Example:
+
+Cluster “DB Timeout”
+Probable root cause: High DB latency → connection pool exhaustion
+Confidence: 82%
+Suggested action: Increase DB pool size + query optimization
+
+
+⸻
+
+🚦 Correlate Alerts & Errors
+
+On both dashboards, allow:
+
+🔹 Cross Filtering
+
+Selecting an alert automatically filters:
+	•	Errors related to that alert
+	•	Services / infra impacted
+
+Selecting an error cluster filters:
+	•	Related alerts
+	•	Affected transactions
+
+This interactivity helps engineers isolate root causes quickly.
+
+⸻
+
+🧠 AI DASHBOARD ANALYTICS PANEL
+
+Add an AI Insights Panel on both dashboards showing:
+
+📌 1. Top Patterns
+	•	Most frequent error patterns
+	•	Most triggered health rules
+	•	Most unstable services/servers
+
+⸻
+
+📌 2. Forecast Risks
+
+Show prediction outputs:
+
+Category	Next 24h risk	Confidence
+Critical alerts	High	87%
+Error spike	Medium	52%
+Service downtime	Medium	66%
+
+
+⸻
+
+📌 3. Recommendation Summaries
+
+For alerts & errors:
+	•	Priority actions
+	•	Estimated impact reduction
+	•	Likelihood to prevent escalation
+
+⸻
+
+🧪 MOCK / STUB SUPPORT
+
+If no real AppDynamics / Dynatrace connection:
+	•	Generate fake alerts and errors
+	•	Randomly simulate patterns
+	•	Provide realistic AI predictions
+
+Include mock data fields like:
+
+alertSource: “AppDynamics”
+alertRule: “High Error Rate”
+errorType: “5xx – Timeout”
+service: “Order API”
+timestamp: “2026-02-27T11:45:00Z”
+
+
+⸻
+
+🧠 BACKEND EXTENSIONS
+
+Routes to implement:
+
+GET /api/alerts
+GET /api/alerts/:alertId
+GET /api/errors
+GET /api/errors/:errorId
+GET /api/alerts/errors/correlated?alertId=:alertId
+
+Each response should include:
+
+Alert:
+
+{
+  "alertId": "",
+  "source": "",
+  "severity": "",
+  "status": "",
+  "entity": "",
+  "timestamp": "",
+  "AI_riskScore": 0,
+  "relatedErrors": []
+}
+
+Error:
+
+{
+  "errorId": "",
+  "type": "",
+  "message": "",
+  "service": "",
+  "server": "",
+  "timestamp": "",
+  "clusterId": ""
+}
+
+
+⸻
+
+🎨 UI REQUIREMENTS
+	•	Unified header with:
+	•	Alerts
+	•	Errors
+	•	Search
+	•	Filters
+	•	Trend charts with clear scales
+	•	Error clustering groups expandable
+	•	Alert correlation graph
+	•	On-click details view
+	•	AI panels with color-coded confidence & risk scores
+
