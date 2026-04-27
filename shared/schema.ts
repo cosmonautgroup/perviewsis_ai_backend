@@ -200,6 +200,7 @@ export type CapacityPlan = z.infer<typeof capacitySchema>;
 export const apmCredentials = pgTable("apm_credentials", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id"),  // null = global/env-var-based; set = org-specific
+  ownerUserId: integer("owner_user_id"),       // credential owner within the organization
   source: text("source").notNull(),           // "appdynamics" | "dynatrace"
   label: text("label").notNull().default("Default"),
   controllerUrl: text("controller_url").notNull(),

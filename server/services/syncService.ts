@@ -83,7 +83,7 @@ function canonicalNodeKey(value?: string | null): string {
 }
 
 // ─── AppDynamics Sync ────────────────────────────────────────────────────────
-async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> {
+async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number | null): Promise<SyncResult> {
   const start = Date.now();
   const resolvedPassword = credential
     ? ((): string => {
@@ -122,6 +122,7 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 
   const logger = new SyncRunLogger({
     orgId: credential?.organizationId ?? null,
+    userId: Number.isFinite(Number(actorUserId)) ? Number(actorUserId) : null,
     credentialId: credential?.id ?? null,
     integration: "appdynamics",
   });
@@ -642,7 +643,7 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 }
 
 // ─── Dynatrace Sync ──────────────────────────────────────────────────────────
-async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
+async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | null): Promise<SyncResult> {
   const start = Date.now();
   const resolvedToken = credential
     ? ((): string => {
@@ -679,6 +680,7 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
 
   const logger = new SyncRunLogger({
     orgId: credential?.organizationId ?? null,
+    userId: Number.isFinite(Number(actorUserId)) ? Number(actorUserId) : null,
     credentialId: credential?.id ?? null,
     integration: "dynatrace",
   });
@@ -697,37 +699,48 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
     const existingIncidentIds = new Set(existingIncidents.map(r => r.externalId));
     const existingServerIds   = new Set(existingServers.map(r => r.externalId));
 
-    // 1. Sync services as "applications"
-    const { entities: services } = await client.getServices();
+    // 1. Sync Dynatrace applications (/api/v1/entity/applications?includeDetails=true)
+    const { applications: dtApps } = await client.getApplications();
+    const toExternalId = (app: any) =>
+      String(app?.entityId ?? app?.applicationId ?? app?.id ?? "").trim();
 
-    const newServices     = services.filter(s => !existingAppIds.has(s.entityId));
-    const updatedServices = services.filter(s =>  existingAppIds.has(s.entityId));
+    const newApplications = dtApps.filter((a) => {
+      const extId = toExternalId(a);
+      return extId.length > 0 && !existingAppIds.has(extId);
+    });
+    const updatedApplications = dtApps.filter((a) => {
+      const extId = toExternalId(a);
+      return extId.length > 0 && existingAppIds.has(extId);
+    });
     logger.log({
-      endpoint: "/api/v2/entities",
-      requestParams: { entitySelector: "type(SERVICE)" },
-      rawResponse: services,
-      newRecords: newServices,
-      updatedRecords: updatedServices,
+      endpoint: "/api/v1/entity/applications",
+      requestParams: { includeDetails: "true" },
+      rawResponse: dtApps,
+      newRecords: newApplications,
+      updatedRecords: updatedApplications,
     });
 
-    for (const svc of services) {
+    for (const app of dtApps) {
+      const externalId = toExternalId(app);
+      if (!externalId) continue;
+      const appName = String(app?.displayName ?? app?.name ?? externalId);
       await db
         .insert(dbApplications)
         .values({
-          externalId: svc.entityId,
+          externalId,
           source: "dynatrace",
           credentialId: credential?.id ?? null,
-          name: svc.displayName,
+          name: appName,
           status: "Healthy",
           healthRuleViolations: 0,
-          metadata: svc as any,
+          metadata: app as any,
           lastSyncAt: new Date(),
         })
         .onConflictDoUpdate({
           target: [dbApplications.externalId, dbApplications.source, dbApplications.credentialId],
           set: {
-            name: svc.displayName,
-            metadata: svc as any,
+            name: appName,
+            metadata: app as any,
             lastSyncAt: new Date(),
             updatedAt: new Date(),
           },
@@ -874,7 +887,7 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
 }
 
 // ─── Orchestration ───────────────────────────────────────────────────────────
-export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: number }> {
+export async function syncAll(actorUserId?: number | null): Promise<{ results: SyncResult[]; totalSynced: number }> {
   const results: SyncResult[] = [];
 
   let credentials: ApmCredential[] = [];
@@ -888,7 +901,7 @@ export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: n
   const hasAppdEnv = !!(process.env.APPDYNAMICS_URL && process.env.APPDYNAMICS_ACCOUNT && process.env.APPDYNAMICS_USERNAME && process.env.APPDYNAMICS_PASSWORD);
   if (appdCredentials.length === 0 && hasAppdEnv) {
     const logEntry = await db.insert(dbSyncLogs).values({ source: "appdynamics", startedAt: new Date(), status: "running" }).returning();
-    const result = await syncAppDynamics();
+    const result = await syncAppDynamics(undefined, actorUserId);
     results.push(result);
     await db.update(dbSyncLogs).set({
       completedAt: new Date(),
@@ -903,7 +916,7 @@ export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: n
   } else if (appdCredentials.length > 0) {
     for (const cred of appdCredentials) {
       const logEntry = await db.insert(dbSyncLogs).values({ source: "appdynamics", credentialId: cred.id, startedAt: new Date(), status: "running" }).returning();
-      const result = await syncAppDynamics(cred);
+      const result = await syncAppDynamics(cred, actorUserId);
       results.push(result);
       await db.update(dbSyncLogs).set({
         completedAt: new Date(),
@@ -921,7 +934,7 @@ export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: n
   const hasDtEnv = !!(process.env.DYNATRACE_URL && process.env.DYNATRACE_TOKEN);
   if (dtCredentials.length === 0 && hasDtEnv) {
     const logEntry = await db.insert(dbSyncLogs).values({ source: "dynatrace", startedAt: new Date(), status: "running" }).returning();
-    const result = await syncDynatrace();
+    const result = await syncDynatrace(undefined, actorUserId);
     results.push(result);
     await db.update(dbSyncLogs).set({
       completedAt: new Date(),
@@ -936,7 +949,7 @@ export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: n
   } else if (dtCredentials.length > 0) {
     for (const cred of dtCredentials) {
       const logEntry = await db.insert(dbSyncLogs).values({ source: "dynatrace", credentialId: cred.id, startedAt: new Date(), status: "running" }).returning();
-      const result = await syncDynatrace(cred);
+      const result = await syncDynatrace(cred, actorUserId);
       results.push(result);
       await db.update(dbSyncLogs).set({
         completedAt: new Date(),
@@ -955,7 +968,7 @@ export async function syncAll(): Promise<{ results: SyncResult[]; totalSynced: n
   return { results, totalSynced };
 }
 
-export async function syncSource(source: "appdynamics" | "dynatrace", credentialId?: number): Promise<SyncResult> {
+export async function syncSource(source: "appdynamics" | "dynatrace", credentialId?: number, actorUserId?: number | null): Promise<SyncResult> {
   let credential: ApmCredential | undefined;
   if (credentialId) {
     const rows = await db.select().from(apmCredentials).where(and(eq(apmCredentials.id, credentialId), eq(apmCredentials.isActive, true)));
@@ -964,7 +977,9 @@ export async function syncSource(source: "appdynamics" | "dynatrace", credential
     const rows = await db.select().from(apmCredentials).where(and(eq(apmCredentials.source, source), eq(apmCredentials.isActive, true))).limit(1);
     credential = rows[0];
   }
-  return source === "appdynamics" ? syncAppDynamics(credential) : syncDynatrace(credential);
+  return source === "appdynamics"
+    ? syncAppDynamics(credential, actorUserId)
+    : syncDynatrace(credential, actorUserId);
 }
 
 export async function getSyncStatus(): Promise<any> {

@@ -1,5 +1,5 @@
 /**
- * Dynatrace REST API v2 Client
+ * Dynatrace REST API Client (v2 + selected v1 endpoints)
  * Docs: https://www.dynatrace.com/support/help/dynatrace-api
  *
  * Authentication: Authorization: Api-Token {token}
@@ -18,6 +18,15 @@ export interface DTEntity {
   properties?: Record<string, any>;
   tags?: { key: string; value?: string }[];
   fromRelationships?: Record<string, any>;
+}
+
+export interface DTApplicationV1 {
+  applicationId?: string | number;
+  id?: string | number;
+  entityId?: string;
+  name?: string;
+  displayName?: string;
+  [key: string]: any;
 }
 
 export interface DTProblem {
@@ -52,16 +61,39 @@ export interface DTLogRecord {
 }
 
 export class DynatraceClient {
-  private baseUrl: string;
+  private baseUrlV2: string;
+  private baseUrlV1: string;
   private config: DynatraceConfig;
 
   constructor(config: DynatraceConfig) {
     this.config = config;
-    this.baseUrl = `${config.environmentUrl.replace(/\/$/, "")}/api/v2`;
+    const root = config.environmentUrl.replace(/\/$/, "");
+    this.baseUrlV2 = `${root}/api/v2`;
+    this.baseUrlV1 = `${root}/api/v1`;
   }
 
-  private async request<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
+  private async requestV2<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+    const url = new URL(`${this.baseUrlV2}${path}`);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Api-Token ${this.config.apiToken}`,
+        Accept: "application/json; charset=utf-8",
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Dynatrace API ${res.status}: ${text.slice(0, 200)}`);
+    }
+
+    return res.json() as Promise<T>;
+  }
+
+  private async requestV1<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+    const url = new URL(`${this.baseUrlV1}${path}`);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
     const res = await fetch(url.toString(), {
@@ -82,7 +114,7 @@ export class DynatraceClient {
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {
     try {
-      await this.request<any>("/entities", { entitySelector: "type(SERVICE)", pageSize: "1" });
+      await this.getApplications();
       return { ok: true, message: "Connected to Dynatrace successfully" };
     } catch (err: any) {
       return { ok: false, message: err.message };
@@ -90,11 +122,19 @@ export class DynatraceClient {
   }
 
   async getProblems(from = "now-24h"): Promise<{ problems: DTProblem[]; totalCount: number }> {
-    return this.request("/problems", { from, pageSize: "100" });
+    return this.requestV2("/problems", { from, pageSize: "100" });
+  }
+
+  async getApplications(): Promise<{ applications: DTApplicationV1[]; totalCount: number }> {
+    const payload = await this.requestV1<{ applications?: DTApplicationV1[] }>("/entity/applications", {
+      includeDetails: "true",
+    });
+    const applications = Array.isArray(payload?.applications) ? payload.applications : [];
+    return { applications, totalCount: applications.length };
   }
 
   async getServices(pageSize = "100"): Promise<{ entities: DTEntity[]; totalCount: number }> {
-    return this.request("/entities", {
+    return this.requestV2("/entities", {
       entitySelector: "type(SERVICE)",
       fields: "properties,tags",
       pageSize,
@@ -102,7 +142,7 @@ export class DynatraceClient {
   }
 
   async getHosts(pageSize = "100"): Promise<{ entities: DTEntity[]; totalCount: number }> {
-    return this.request("/entities", {
+    return this.requestV2("/entities", {
       entitySelector: "type(HOST)",
       fields: "properties,tags,fromRelationships,toRelationships",
       pageSize,
@@ -110,7 +150,7 @@ export class DynatraceClient {
   }
 
   async getProcessGroups(pageSize = "100"): Promise<{ entities: DTEntity[]; totalCount: number }> {
-    return this.request("/entities", {
+    return this.requestV2("/entities", {
       entitySelector: "type(PROCESS_GROUP)",
       fields: "properties,tags,fromRelationships,toRelationships",
       pageSize,
@@ -118,7 +158,7 @@ export class DynatraceClient {
   }
 
   async getProcessGroupInstances(pageSize = "500"): Promise<{ entities: DTEntity[]; totalCount: number }> {
-    return this.request("/entities", {
+    return this.requestV2("/entities", {
       entitySelector: "type(PROCESS_GROUP_INSTANCE)",
       fields: "properties,tags,fromRelationships,toRelationships",
       pageSize,
@@ -126,7 +166,7 @@ export class DynatraceClient {
   }
 
   async getMetrics(metricSelector: string, from = "now-1h", resolution = "5m"): Promise<DTMetricResult> {
-    return this.request("/metrics/query", { metricSelector, from, resolution });
+    return this.requestV2("/metrics/query", { metricSelector, from, resolution });
   }
 
   async getCpuMetrics(from = "now-1h"): Promise<DTMetricResult> {
@@ -160,15 +200,15 @@ export class DynatraceClient {
   async getEvents(from = "now-24h", eventType?: string): Promise<{ events: any[]; totalCount: number }> {
     const params: Record<string, string> = { from, pageSize: "100" };
     if (eventType) params.eventType = eventType;
-    return this.request("/events", params);
+    return this.requestV2("/events", params);
   }
 
   async getLogs(query = "status:error", from = "now-1h"): Promise<{ results: DTLogRecord[]; sliceSize: number }> {
-    return this.request("/logs/search", { query, from, pageSize: "100" });
+    return this.requestV2("/logs/search", { query, from, pageSize: "100" });
   }
 
   async getAvailabilityZones(): Promise<any> {
-    return this.request("/entities", { entitySelector: "type(CLOUD_APPLICATION_NAMESPACE)" });
+    return this.requestV2("/entities", { entitySelector: "type(CLOUD_APPLICATION_NAMESPACE)" });
   }
 }
 

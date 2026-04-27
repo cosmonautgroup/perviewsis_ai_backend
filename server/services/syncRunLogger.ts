@@ -24,6 +24,7 @@ export interface ApiCallEntry {
 export interface SyncRunLog {
   syncRunId: string;
   orgId: number | null;
+  userId: number | null;
   credentialId: number | null;
   integration: string;
   startedAt: string;
@@ -36,6 +37,7 @@ export interface SyncRunLog {
 export interface SyncRunSummary {
   syncRunId: string;
   orgId: number | null;
+  userId: number | null;
   integration: string;
   startedAt: string;
   completedAt: string | null;
@@ -54,6 +56,7 @@ const LOG_BASE = path.join(process.cwd(), "logs", "sync-runs");
 export class SyncRunLogger {
   private readonly syncRunId: string;
   private readonly orgId: number | null;
+  private readonly userId: number | null;
   private readonly credentialId: number | null;
   private readonly integration: string;
   private readonly startedAt: string;
@@ -62,11 +65,13 @@ export class SyncRunLogger {
 
   constructor(opts: {
     orgId: number | null;
+    userId: number | null;
     credentialId: number | null;
     integration: string;
   }) {
     this.syncRunId = randomUUID();
     this.orgId = opts.orgId;
+    this.userId = opts.userId;
     this.credentialId = opts.credentialId;
     this.integration = opts.integration;
     this.startedAt = new Date().toISOString();
@@ -108,6 +113,7 @@ export class SyncRunLogger {
     const log: SyncRunLog = {
       syncRunId: this.syncRunId,
       orgId: this.orgId,
+      userId: this.userId,
       credentialId: this.credentialId,
       integration: this.integration,
       startedAt: this.startedAt,
@@ -140,7 +146,7 @@ export class SyncRunLogger {
  * List all sync run log files for an organization, newest first.
  * Returns lightweight metadata by reading just the file stats + JSON header.
  */
-export function listSyncRuns(orgId: number): SyncRunSummary[] {
+export function listSyncRuns(orgId: number, userId?: number): SyncRunSummary[] {
   const orgDir = path.join(LOG_BASE, String(orgId));
   if (!fs.existsSync(orgDir)) return [];
 
@@ -156,6 +162,7 @@ export function listSyncRuns(orgId: number): SyncRunSummary[] {
       summaries.push({
         syncRunId: parsed.syncRunId,
         orgId: parsed.orgId,
+        userId: parsed.userId ?? null,
         integration: parsed.integration,
         startedAt: parsed.startedAt,
         completedAt: parsed.completedAt,
@@ -169,7 +176,11 @@ export function listSyncRuns(orgId: number): SyncRunSummary[] {
     }
   }
 
-  return summaries.sort((a, b) =>
+  const filtered = Number.isFinite(Number(userId))
+    ? summaries.filter((s) => Number(s.userId ?? NaN) === Number(userId))
+    : summaries;
+
+  return filtered.sort((a, b) =>
     new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
   ).slice(0, 100);
 }
@@ -178,7 +189,7 @@ export function listSyncRuns(orgId: number): SyncRunSummary[] {
  * Returns the absolute file path for a sync run, or null if invalid / not found.
  * Validates the syncRunId to prevent path traversal attacks.
  */
-export function getSyncRunFilePath(orgId: number, syncRunId: string): string | null {
+export function getSyncRunFilePath(orgId: number, syncRunId: string, userId?: number): string | null {
   // Only allow valid UUID format
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(syncRunId)) {
     return null;
@@ -190,6 +201,15 @@ export function getSyncRunFilePath(orgId: number, syncRunId: string): string | n
   // Ensure the resolved path is still within the expected org directory
   if (!filePath.startsWith(path.resolve(orgDir))) return null;
   if (!fs.existsSync(filePath)) return null;
+
+  if (Number.isFinite(Number(userId))) {
+    try {
+      const parsed: SyncRunLog = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (Number(parsed.userId ?? NaN) !== Number(userId)) return null;
+    } catch {
+      return null;
+    }
+  }
 
   return filePath;
 }

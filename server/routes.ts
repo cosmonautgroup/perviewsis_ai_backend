@@ -60,6 +60,33 @@ export async function registerRoutes(
     }
   };
 
+  try {
+    await db.execute(sql`ALTER TABLE IF EXISTS apm_credentials ADD COLUMN IF NOT EXISTS owner_user_id integer`);
+  } catch (err) {
+    console.warn("[scoping] unable to ensure apm_credentials.owner_user_id:", err);
+  }
+
+  const asAuthedUser = (req: any) => req.user as import("@shared/schema").User | undefined;
+
+  const scopedCredsForUser = async (req: any, includeInactive = false) => {
+    const user = asAuthedUser(req);
+    if (!user) return { user: null, orgData: null, creds: [] as Array<{ id: number; source: string }> };
+    const orgData = await getUserOrg(user.id);
+    if (!orgData) return { user, orgData: null, creds: [] as Array<{ id: number; source: string }> };
+
+    const whereClauses = [
+      eq(apmCredentials.organizationId, orgData.org.id),
+      eq(apmCredentials.ownerUserId, user.id),
+      ...(includeInactive ? [] : [eq(apmCredentials.isActive, true)]),
+    ];
+
+    const creds = await db
+      .select({ id: apmCredentials.id, source: apmCredentials.source })
+      .from(apmCredentials)
+      .where(and(...whereClauses));
+    return { user, orgData, creds };
+  };
+
   // ══════════════════════════════════════════════════════════════
   // AUTH ROUTES (public — no auth required)
   // ══════════════════════════════════════════════════════════════
@@ -2965,12 +2992,7 @@ export async function registerRoutes(
   app.get("/api/capacity-planning/risks", async (req, res) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const user = req.user as any;
-      const orgData = await getUserOrg(user.id);
-      if (!orgData) return res.json([]);
-      const creds = await db.select({ id: apmCredentials.id })
-        .from(apmCredentials)
-        .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
+      const { creds } = await scopedCredsForUser(req);
       if (!creds.length) return res.json([]);
       const credIds = creds.map(c => c.id);
       const risks = await db.select().from(dbCapacityRisks)
@@ -2990,7 +3012,15 @@ export async function registerRoutes(
   });
   app.get("/api/capacity-planning/risks/:riskId", async (req, res) => {
     try {
-      const [risk] = await db.select().from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.status(404).json({ message: "Risk not found" });
+      const [risk] = await db.select().from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.status(404).json({ message: "Risk not found" });
       return res.json({
         id: risk.riskId, riskId: risk.riskId, name: risk.name, type: risk.type, severity: risk.severity,
@@ -3005,50 +3035,100 @@ export async function registerRoutes(
   });
   app.get("/api/capacity-planning/risks/:riskId/related-incidents", async (req, res) => {
     try {
-      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.json([]);
       const incs = await db.select().from(dbIncidents)
-        .where(sql`${dbIncidents.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp})`)
+        .where(credIds.length === 1
+          ? sql`${dbIncidents.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ${credIds[0]})`
+          : sql`${dbIncidents.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`)
         .limit(5);
       return res.json(incs.map(i => ({ id: i.externalId, title: i.title, severity: i.severity, status: i.status, startTime: i.startTime?.getTime() })));
     } catch { return res.json([]); }
   });
   app.get("/api/capacity-planning/risks/:riskId/related-alerts", async (req, res) => {
     try {
-      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.json([]);
       const rows = await db.select().from(dbAlerts)
-        .where(sql`${dbAlerts.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp})`)
+        .where(credIds.length === 1
+          ? sql`${dbAlerts.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ${credIds[0]})`
+          : sql`${dbAlerts.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`)
         .limit(5);
       return res.json(rows.map(a => ({ alertId: `ALT-${a.id}`, entity: a.name, severity: a.severity, status: a.status, timestamp: a.triggeredAt?.getTime() })));
     } catch { return res.json([]); }
   });
   app.get("/api/capacity-planning/risks/:riskId/related-errors", async (req, res) => {
     try {
-      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.json([]);
       const rows = await db.select().from(dbErrors)
-        .where(eq(dbErrors.applicationName, risk.affectedApp ?? ""))
+        .where(credIds.length === 1
+          ? sql`${dbErrors.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ${credIds[0]})`
+          : sql`${dbErrors.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`)
         .limit(5);
       return res.json(rows.map(e => ({ errorId: `ERR-${e.id}`, type: e.errorType, message: e.message, severity: e.severity, count: e.frequency })));
     } catch { return res.json([]); }
   });
   app.get("/api/capacity-planning/risks/:riskId/related-transactions", async (req, res) => {
     try {
-      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.json([]);
       const rows = await db.select().from(dbTransactions)
-        .where(sql`${dbTransactions.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp})`)
+        .where(credIds.length === 1
+          ? sql`${dbTransactions.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ${credIds[0]})`
+          : sql`${dbTransactions.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`)
         .limit(5);
       return res.json(rows.map(t => ({ name: t.name, avgResponseTime: t.avgResponseTime, errorRate: t.errorRate, callsPerMinute: t.callsPerMinute })));
     } catch { return res.json([]); }
   });
   app.get("/api/capacity-planning/risks/:riskId/related-services-nodes", async (req, res) => {
     try {
-      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(eq(dbCapacityRisks.riskId, req.params.riskId));
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json({ services: [], nodes: [] });
+      const [risk] = await db.select({ affectedApp: dbCapacityRisks.affectedApp }).from(dbCapacityRisks).where(and(
+        eq(dbCapacityRisks.riskId, req.params.riskId),
+        credIds.length === 1
+          ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+          : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`,
+      ));
       if (!risk) return res.json({ services: [], nodes: [] });
       const nodes = await db.select().from(dbServers)
-        .where(sql`${dbServers.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp})`)
+        .where(credIds.length === 1
+          ? sql`${dbServers.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ${credIds[0]})`
+          : sql`${dbServers.applicationId} IN (SELECT external_id FROM apm_applications WHERE name = ${risk.affectedApp} AND credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[]))`)
         .limit(5);
       return res.json({ services: [risk.affectedApp], nodes: nodes.map(n => ({ name: n.name, status: n.status, cpuUsage: n.cpuUsage, memoryUsage: n.memoryUsage })) });
     } catch { return res.json({ services: [], nodes: [] }); }
@@ -3057,8 +3137,17 @@ export async function registerRoutes(
     const { type, id } = req.query as { type: string; id: string };
     if (!type || !id) return res.json([]);
     try {
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
       const risks = await db.select().from(dbCapacityRisks)
-        .where(and(eq(dbCapacityRisks.entityType, type), eq(dbCapacityRisks.entityId, id)))
+        .where(and(
+          eq(dbCapacityRisks.entityType, type),
+          eq(dbCapacityRisks.entityId, id),
+          credIds.length === 1
+            ? sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ${credIds[0]})`
+            : sql`${dbCapacityRisks.appId} IN (SELECT id FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map(cid => sql`${cid}`), sql`, `)}]::integer[]))`,
+        ))
         .orderBy(desc(dbCapacityRisks.riskScore));
       return res.json(risks.map(r => ({ id: r.riskId, riskId: r.riskId, name: r.name, type: r.type, severity: r.severity, riskScore: r.riskScore, current: r.current, threshold: r.threshold, hoursToSaturation: r.hoursToSaturation })));
     } catch { return res.json([]); }
@@ -3152,27 +3241,76 @@ export async function registerRoutes(
 
   app.get("/api/capacity-planning/global", async (req, res) => {
     try {
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) {
+        return res.json({
+          summary: {
+            totalNodes: 0,
+            criticalNodes: 0,
+            warningNodes: 0,
+            headroomCpu: 100,
+            headroomMemory: 100,
+            overallRiskScore: 0,
+            avgCpuUtilization: 0,
+            avgMemoryUtilization: 0,
+            avgDiskUtilization: 0,
+          },
+          forecasts: {
+            "24h": { cpuMax: 0, memoryMax: 0, diskMax: 0, networkMax: 0, saturationEvents: 0 },
+            "72h": { cpuMax: 0, memoryMax: 0, diskMax: 0, networkMax: 0, saturationEvents: 0 },
+            "1w": { cpuMax: 0, memoryMax: 0, diskMax: 0, networkMax: 0, saturationEvents: 0 },
+            "3m": { cpuMax: 0, memoryMax: 0, diskMax: 0, networkMax: 0, saturationEvents: 0 },
+          },
+          metrics: {
+            cpu: { historical: [], forecast: [], threshold: 85 },
+            memory: { historical: [], forecast: [], threshold: 85 },
+            disk: { historical: [], forecast: [], threshold: 80 },
+            network: { historical: [], forecast: [], threshold: 80 },
+            requests: { historical: [], forecast: [], threshold: 85 },
+          },
+          topRisks: [],
+          saturationTimeline: [],
+          clusters: [],
+          aiInsights: {
+            costForecast: { current: 0, projected30d: 0, projected90d: 0, optimized: 0 },
+            predictions: [],
+            scalingStrategy: "No scoped capacity data.",
+          },
+        });
+      }
+
       const requestedHorizon = String(req.query.horizon ?? "72h");
       const selectedHorizon = Object.prototype.hasOwnProperty.call(HORIZON_POINTS, requestedHorizon)
         ? requestedHorizon
         : "72h";
       const selectedForecastPoints = HORIZON_POINTS[selectedHorizon] ?? 72;
       const selectedAppId = Number(req.query.appId ?? NaN);
+      const scopedApps = await db.select().from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
+      const scopedExternalIds = scopedApps.map((a) => String(a.externalId ?? "")).filter(Boolean);
       const selectedApp = Number.isFinite(selectedAppId)
-        ? (await db.select().from(dbApplications).where(eq(dbApplications.id, selectedAppId)).limit(1))[0]
+        ? scopedApps.find((a) => Number(a.id) === selectedAppId) ?? null
         : null;
 
       const appFilter = selectedApp?.externalId ? eq(dbServers.applicationId, selectedApp.externalId) : undefined;
       const [servers, apps, risksRaw, txRows, alertRows, incRows, errRows] = await Promise.all([
         appFilter
           ? db.select().from(dbServers).where(appFilter).limit(50)
-          : db.select().from(dbServers),
-        selectedApp?.id
-          ? db.select().from(dbApplications).where(eq(dbApplications.id, selectedApp.id))
-          : db.select().from(dbApplications),
+          : (scopedExternalIds.length === 0
+            ? Promise.resolve([])
+            : scopedExternalIds.length === 1
+            ? db.select().from(dbServers).where(eq(dbServers.applicationId, scopedExternalIds[0]))
+            : db.select().from(dbServers).where(sql`${dbServers.applicationId} = ANY(ARRAY[${sql.join(scopedExternalIds.map((id) => sql`${id}`), sql`, `)}]::text[])`)),
+        Promise.resolve(selectedApp?.id ? [selectedApp] : scopedApps),
         selectedApp?.id
           ? db.select().from(dbCapacityRisks).where(eq(dbCapacityRisks.appId, selectedApp.id)).orderBy(desc(dbCapacityRisks.riskScore))
-          : db.select().from(dbCapacityRisks).orderBy(desc(dbCapacityRisks.riskScore)),
+          : (scopedApps.length === 0
+            ? Promise.resolve([])
+            : scopedApps.length === 1
+            ? db.select().from(dbCapacityRisks).where(eq(dbCapacityRisks.appId, scopedApps[0].id)).orderBy(desc(dbCapacityRisks.riskScore))
+            : db.select().from(dbCapacityRisks).where(sql`${dbCapacityRisks.appId} = ANY(ARRAY[${sql.join(scopedApps.map((a) => sql`${a.id}`), sql`, `)}]::integer[])`).orderBy(desc(dbCapacityRisks.riskScore))),
         selectedApp?.externalId
           ? db.select().from(dbTransactions).where(eq(dbTransactions.applicationId, selectedApp.externalId)).limit(120)
           : Promise.resolve([]),
@@ -3610,19 +3748,30 @@ export async function registerRoutes(
 
   app.get("/api/capacity-planning/nodes", async (req, res) => {
     try {
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) {
+        return res.json({
+          summary: { totalNodes: 0, criticalNodes: 0, warningNodes: 0, avgCpu: 0, avgMemory: 0, avgDisk: 0 },
+          nodes: [],
+        });
+      }
       const selectedAppId = Number(req.query.appId ?? NaN);
+      const scopedApps = await db.select({
+        id: dbApplications.id,
+        name: dbApplications.name,
+        externalId: dbApplications.externalId,
+        source: dbApplications.source,
+      }).from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
       const selectedApp = Number.isFinite(selectedAppId)
-        ? (await db.select().from(dbApplications).where(eq(dbApplications.id, selectedAppId)).limit(1))[0]
+        ? scopedApps.find((a) => Number(a.id) === selectedAppId) ?? null
         : null;
 
       const apps = selectedApp?.id
         ? [selectedApp]
-        : await db.select({
-          id: dbApplications.id,
-          name: dbApplications.name,
-          externalId: dbApplications.externalId,
-          source: dbApplications.source,
-        }).from(dbApplications);
+        : scopedApps;
 
       const appByExternalId = new Map(
         apps
@@ -3633,7 +3782,11 @@ export async function registerRoutes(
       const serverFilter = selectedApp?.externalId ? eq(dbServers.applicationId, selectedApp.externalId) : undefined;
       const servers = serverFilter
         ? await db.select().from(dbServers).where(serverFilter).orderBy(desc(dbServers.lastSyncAt)).limit(500)
-        : await db.select().from(dbServers).orderBy(desc(dbServers.lastSyncAt)).limit(1000);
+        : (apps.length === 0
+          ? []
+          : apps.length === 1
+            ? await db.select().from(dbServers).where(eq(dbServers.applicationId, String(apps[0].externalId ?? ""))).orderBy(desc(dbServers.lastSyncAt)).limit(1000)
+            : await db.select().from(dbServers).where(sql`${dbServers.applicationId} = ANY(ARRAY[${sql.join(apps.map((a) => sql`${String(a.externalId ?? "")}`), sql`, `)}]::text[])`).orderBy(desc(dbServers.lastSyncAt)).limit(1000));
 
       const nodes = servers.map((s) => {
         const resolved = resolveServerUtilization(s, null);
@@ -3684,6 +3837,10 @@ export async function registerRoutes(
 
   app.get("/api/capacity-planning/applications/:appId", async (req, res) => {
     try {
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.status(404).json({ message: "Application not found" });
+
       const HORIZON_POINTS: Record<string, number> = {
         "24h": 24,
         "72h": 72,
@@ -3697,6 +3854,10 @@ export async function registerRoutes(
 
       const appRow = await resolveDbApp(String(req.params.appId));
       if (!appRow) return res.status(404).json({ message: "Application not found" });
+      const appCredId = Number(appRow.credentialId ?? NaN);
+      if (!Number.isFinite(appCredId) || !credIds.includes(appCredId)) {
+        return res.status(404).json({ message: "Application not found" });
+      }
       const appDbId = Number(appRow.id);
       if (!Number.isFinite(appDbId)) return res.status(400).json({ message: "Invalid application mapping" });
 
@@ -3836,8 +3997,38 @@ export async function registerRoutes(
 
   app.get("/api/capacity-planning/cluster/:clusterId", async (req, res) => {
     try {
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) {
+        return res.json({
+          clusterName: String(req.params.clusterId ?? "cluster"),
+          environment: "Unknown",
+          version: "Unknown",
+          region: "Unknown",
+          current: { nodes: 0, pods: 0, pendingPods: 0, cpuUsed: 0, cpuAllocatable: 0, memUsed: 0, memAllocatable: 0, storageUsedGb: 0, storageGb: 0 },
+          nodePools: [],
+          forecasts: { cpu: { historical: [], forecast: [], threshold: 85 }, memory: { historical: [], forecast: [], threshold: 85 } },
+          autoscalerEvents: [],
+          throttlingEvents: [],
+          daysToNewNode: null,
+          recommendations: [],
+          relatedApps: [],
+          relatedCounts: { alerts: 0, activeAlerts: 0, incidents: 0, openIncidents: 0 },
+        });
+      }
+
       const clusterId = String(req.params.clusterId ?? "").toLowerCase();
-      const allServers = await db.select().from(dbServers);
+      const scopedApps = await db.select({
+        externalId: dbApplications.externalId,
+      }).from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
+      const scopedExternalIds = scopedApps.map((a) => String(a.externalId ?? "")).filter(Boolean);
+      const allServers = scopedExternalIds.length === 0
+        ? []
+        : scopedExternalIds.length === 1
+          ? await db.select().from(dbServers).where(eq(dbServers.applicationId, scopedExternalIds[0]))
+          : await db.select().from(dbServers).where(sql`${dbServers.applicationId} = ANY(ARRAY[${sql.join(scopedExternalIds.map((id) => sql`${id}`), sql`, `)}]::text[])`);
       const groups = new Map<string, typeof allServers>();
       for (const srv of allServers) {
         const groupName = String(srv.tier ?? srv.role ?? "default");
@@ -4436,26 +4627,8 @@ export async function registerRoutes(
       if (resolved?.externalId) scopedExternalAppId = String(resolved.externalId);
     }
 
-    const user = req.user as import("@shared/schema").User | undefined;
-    let credIds: number[] = [];
-    let scopedCreds: Array<{ id: number; source: string }> = [];
-    if (user) {
-      const orgData = await getUserOrg(user.id);
-      if (orgData) {
-        const orgCreds = await db.select({ id: apmCredentials.id, source: apmCredentials.source })
-          .from(apmCredentials)
-          .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-        scopedCreds = orgCreds;
-        credIds = orgCreds.map((c) => c.id);
-      }
-    }
-    if (credIds.length === 0) {
-      const activeCreds = await db.select({ id: apmCredentials.id, source: apmCredentials.source })
-        .from(apmCredentials)
-        .where(eq(apmCredentials.isActive, true));
-      scopedCreds = activeCreds;
-      credIds = activeCreds.map((c) => c.id);
-    }
+    const { creds: scopedCreds } = await scopedCredsForUser(req);
+    const credIds = scopedCreds.map((c) => c.id);
     if (credIds.length === 0) return res.json([]);
 
     // Map to unified alert format for currently active apps only.
@@ -4872,6 +5045,14 @@ export async function registerRoutes(
   app.get("/api/alerts/:alertId/related", async (req, res) => {
     const { alertId } = req.params;
     try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json({ incidents: [], errors: [], nodes: [] });
+      const scopedApps = await db.select({ externalId: dbApplications.externalId }).from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
+      const scopedExternalIds = new Set(scopedApps.map((a) => String(a.externalId ?? "")));
+
       let appId: string | null = null;
       if (alertId.startsWith("ALT-")) {
         const numId = parseInt(alertId.slice(4));
@@ -4882,6 +5063,7 @@ export async function registerRoutes(
         const [i] = await db.select({ applicationId: dbIncidents.applicationId }).from(dbIncidents).where(eq(dbIncidents.id, numId));
         appId = i?.applicationId ?? null;
       }
+      if (appId && !scopedExternalIds.has(String(appId))) return res.json({ incidents: [], errors: [], nodes: [] });
       if (!appId) return res.json({ incidents: [], errors: [], nodes: [] });
       const incidents = await db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, appId)).limit(5);
       const errors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, appId)).limit(5);
@@ -4896,6 +5078,15 @@ export async function registerRoutes(
   app.get("/api/alerts/:alertId", async (req, res) => {
     const { alertId } = req.params;
     try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.status(404).json({ message: "Alert not found" });
+      const scopedApps = await db.select({ id: dbApplications.id, externalId: dbApplications.externalId, credentialId: dbApplications.credentialId }).from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
+      const scopedExternalIds = new Set(scopedApps.map((a) => String(a.externalId ?? "")));
+      const scopedAppIds = new Set(scopedApps.map((a) => Number(a.id)));
+
       const normSeverity = (sev?: string | null) => {
         const s = String(sev ?? "").trim();
         if (s === "Warning") return "Medium";
@@ -4920,6 +5111,7 @@ export async function registerRoutes(
       if (alertId.startsWith("PRED-ALT-")) {
         const appId = Number(alertId.slice("PRED-ALT-".length));
         if (Number.isFinite(appId)) {
+          if (!scopedAppIds.has(appId)) return res.status(404).json({ message: "Alert not found" });
           const [app] = await db.select().from(dbApplications).where(eq(dbApplications.id, appId));
           const appName = app?.name ?? "Application";
           const forecastChart = buildForecast(55);
@@ -4956,6 +5148,7 @@ export async function registerRoutes(
         if (!isNaN(numId)) {
           const [a] = await db.select().from(dbAlerts).where(eq(dbAlerts.id, numId));
           if (a) {
+            if (!scopedExternalIds.has(String(a.applicationId ?? ""))) return res.status(404).json({ message: "Alert not found" });
             const md: any = a.metadata ?? {};
             const appdHealthRuleName = String(md?.healthRuleName ?? "").trim() || a.name;
             const appdViolationName = String(md?.name ?? "").trim() || a.name;
@@ -5033,6 +5226,7 @@ export async function registerRoutes(
         if (!isNaN(numId)) {
           const [i] = await db.select().from(dbIncidents).where(eq(dbIncidents.id, numId));
           if (i) {
+            if (!scopedExternalIds.has(String(i.applicationId ?? ""))) return res.status(404).json({ message: "Alert not found" });
             const [app] = await db.select({ id: dbApplications.id, name: dbApplications.name }).from(dbApplications).where(eq(dbApplications.externalId, i.applicationId ?? ""));
             const severity = normSeverity(i.severity);
             const risk = severity === "Critical" ? 88 : severity === "High" ? 72 : severity === "Medium" ? 52 : 35;
@@ -5063,7 +5257,7 @@ export async function registerRoutes(
         const numId = parseInt(alertId);
         if (!isNaN(numId)) {
           const [row] = await db.select().from(dbAlerts).where(eq(dbAlerts.id, numId));
-          if (row) return res.json(row);
+          if (row && scopedExternalIds.has(String(row.applicationId ?? ""))) return res.json(row);
         }
       }
       return res.status(404).json({ message: "Alert not found" });
@@ -5075,15 +5269,9 @@ export async function registerRoutes(
     const includeSnapshotsRaw = String((req.query as any)?.includeSnapshots ?? "").toLowerCase();
     const includeSnapshots = includeSnapshotsRaw === "1" || includeSnapshotsRaw === "true" || includeSnapshotsRaw === "yes";
 
-    const user = req.user as import("@shared/schema").User | undefined;
-    if (user) {
-      const orgData = await getUserOrg(user.id);
-      if (orgData) {
-        const orgCreds = await db.select({ id: apmCredentials.id })
-          .from(apmCredentials)
-          .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-        if (orgCreds.length > 0) {
-          const credIds = orgCreds.map(c => c.id);
+    const { creds } = await scopedCredsForUser(req);
+    if (creds.length > 0) {
+      const credIds = creds.map(c => c.id);
           const appRows = await db.select({
             externalId: dbApplications.externalId,
             name: dbApplications.name,
@@ -5450,8 +5638,6 @@ export async function registerRoutes(
                 .slice(0, 300)
             );
           }
-        }
-      }
     }
     // Fallback: no credentials configured → empty
     return res.json([]);
@@ -7065,23 +7251,39 @@ export async function registerRoutes(
   });
 
   // Trigger full sync (all sources)
-  app.post("/api/apm/sync", async (_req, res) => {
+  app.post("/api/apm/sync", requireAuth, async (req, res) => {
     try {
-      const result = await syncAll();
-      res.json(result);
+      const { user, creds } = await scopedCredsForUser(req, false);
+      if (!user || creds.length === 0) return res.json({ results: [], totalSynced: 0 });
+      const results = await Promise.all(creds.map((c) => syncSource(c.source as "appdynamics" | "dynatrace", c.id, user.id)));
+      const totalSynced = results.reduce((sum, r) => sum + Number(r.recordsSynced ?? 0), 0);
+      res.json({ results, totalSynced });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   // Trigger sync for one source
-  app.post("/api/apm/sync/:source", async (req, res) => {
+  app.post("/api/apm/sync/:source", requireAuth, async (req, res) => {
     const source = req.params.source as "appdynamics" | "dynatrace";
     if (!["appdynamics", "dynatrace"].includes(source)) {
       return res.status(400).json({ error: "source must be appdynamics or dynatrace" });
     }
     try {
-      const result = await syncSource(source, req.body?.credentialId);
+      const requestedCredId = Number(req.body?.credentialId ?? NaN);
+      const { user, creds } = await scopedCredsForUser(req, false);
+      if (!user) return res.status(401).json({ error: "Not authenticated" });
+      const sourceCreds = creds.filter((c) => c.source === source);
+      if (sourceCreds.length === 0) {
+        return res.status(404).json({ error: `No ${source} credential found for current user` });
+      }
+      const credentialId = Number.isFinite(requestedCredId)
+        ? requestedCredId
+        : sourceCreds[0].id;
+      if (!sourceCreds.some((c) => c.id === credentialId)) {
+        return res.status(403).json({ error: "Credential is not accessible for current user" });
+      }
+      const result = await syncSource(source, credentialId, user.id);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -7093,7 +7295,13 @@ export async function registerRoutes(
     const credId = parseInt(req.params.id);
     if (isNaN(credId)) return res.status(400).json({ ok: false, message: "Invalid credential ID" });
     try {
-      const [cred] = await db.select().from(apmCredentials).where(eq(apmCredentials.id, credId));
+      const { user, orgData } = await scopedCredsForUser(req, true);
+      if (!user || !orgData) return res.status(401).json({ ok: false, message: "Not authenticated" });
+      const [cred] = await db.select().from(apmCredentials).where(and(
+        eq(apmCredentials.id, credId),
+        eq(apmCredentials.organizationId, orgData.org.id),
+        eq(apmCredentials.ownerUserId, user.id),
+      ));
       if (!cred) return res.status(404).json({ ok: false, message: "Credential not found" });
       if (cred.source === "appdynamics") {
         const { AppDynamicsClient } = await import("./services/appDynamics");
@@ -7158,8 +7366,10 @@ export async function registerRoutes(
   });
 
   // List credentials
-  app.get("/api/apm/credentials", async (_req, res) => {
+  app.get("/api/apm/credentials", requireAuth, async (req, res) => {
     try {
+      const { user, orgData } = await scopedCredsForUser(req, true);
+      if (!user || !orgData) return res.json([]);
       const creds = await db.select({
         id: apmCredentials.id,
         source: apmCredentials.source,
@@ -7170,7 +7380,10 @@ export async function registerRoutes(
         isActive: apmCredentials.isActive,
         lastSyncAt: apmCredentials.lastSyncAt,
         createdAt: apmCredentials.createdAt,
-      }).from(apmCredentials);
+      }).from(apmCredentials).where(and(
+        eq(apmCredentials.organizationId, orgData.org.id),
+        eq(apmCredentials.ownerUserId, user.id),
+      ));
       res.json(creds);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
@@ -7191,49 +7404,99 @@ export async function registerRoutes(
         clientId: safeEncrypt(clientId) as any,
         clientSecret: safeEncrypt(clientSecret) as any,
         organizationId,
+        ownerUserId: user.id,
       }).returning();
       res.status(201).json({ ...cred, passwordHash: undefined });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Delete credential
-  app.delete("/api/apm/credentials/:id", async (req, res) => {
+  app.delete("/api/apm/credentials/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(apmCredentials).where(eq(apmCredentials.id, parseInt(req.params.id)));
+      const credId = parseInt(req.params.id);
+      if (!Number.isFinite(credId)) return res.status(400).json({ error: "Invalid credential ID" });
+      const { user, orgData } = await scopedCredsForUser(req, true);
+      if (!user || !orgData) return res.status(401).json({ error: "Not authenticated" });
+      await db.delete(apmCredentials).where(and(
+        eq(apmCredentials.id, credId),
+        eq(apmCredentials.organizationId, orgData.org.id),
+        eq(apmCredentials.ownerUserId, user.id),
+      ));
       res.json({ success: true });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Get synced applications from DB
-  app.get("/api/apm/applications", async (_req, res) => {
-    try { res.json(await db.select().from(dbApplications).orderBy(dbApplications.name)); }
+  app.get("/api/apm/applications", requireAuth, async (req, res) => {
+    try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const rows = await db.select().from(dbApplications).where(credIds.length === 1
+        ? eq(dbApplications.credentialId, credIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`)
+        .orderBy(dbApplications.name);
+      res.json(rows);
+    }
     catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Get synced incidents from DB
-  app.get("/api/apm/incidents", async (req, res) => {
+  app.get("/api/apm/incidents", requireAuth, async (req, res) => {
     try {
-      const source = req.query.source as string | undefined;
-      const query = db.select().from(dbIncidents).orderBy(desc(dbIncidents.startTime)).limit(100);
-      res.json(await query);
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const rows = await db.select().from(dbIncidents).where(credIds.length === 1
+        ? sql`${dbIncidents.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${credIds[0]})`
+        : sql`${dbIncidents.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`)
+        .orderBy(desc(dbIncidents.startTime)).limit(100);
+      res.json(rows);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Get synced alerts from DB
-  app.get("/api/apm/alerts", async (_req, res) => {
-    try { res.json(await db.select().from(dbAlerts).orderBy(desc(dbAlerts.triggeredAt)).limit(100)); }
+  app.get("/api/apm/alerts", requireAuth, async (req, res) => {
+    try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const rows = await db.select().from(dbAlerts).where(credIds.length === 1
+        ? sql`${dbAlerts.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${credIds[0]})`
+        : sql`${dbAlerts.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`)
+        .orderBy(desc(dbAlerts.triggeredAt)).limit(100);
+      res.json(rows);
+    }
     catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Get synced servers from DB
-  app.get("/api/apm/servers", async (_req, res) => {
-    try { res.json(await db.select().from(dbServers).orderBy(dbServers.name)); }
+  app.get("/api/apm/servers", requireAuth, async (req, res) => {
+    try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const rows = await db.select().from(dbServers).where(credIds.length === 1
+        ? sql`${dbServers.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${credIds[0]})`
+        : sql`${dbServers.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`)
+        .orderBy(dbServers.name);
+      res.json(rows);
+    }
     catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   // Get recent sync logs
-  app.get("/api/apm/sync/logs", async (_req, res) => {
-    try { res.json(await db.select().from(dbSyncLogs).orderBy(desc(dbSyncLogs.startedAt)).limit(50)); }
+  app.get("/api/apm/sync/logs", requireAuth, async (req, res) => {
+    try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      if (credIds.length === 0) return res.json([]);
+      const rows = await db.select().from(dbSyncLogs).where(credIds.length === 1
+        ? eq(dbSyncLogs.credentialId, credIds[0])
+        : sql`${dbSyncLogs.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`)
+        .orderBy(desc(dbSyncLogs.startedAt)).limit(50);
+      res.json(rows);
+    }
     catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -7260,7 +7523,7 @@ export async function registerRoutes(
       const user = req.user as any;
       const [membership] = await db.select().from(organizationMembers).where(eq(organizationMembers.userId, user.id));
       if (!membership) return res.json([]);
-      const runs = listSyncRuns(membership.organizationId);
+      const runs = listSyncRuns(membership.organizationId, user.id);
       return res.json(runs);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -7275,7 +7538,7 @@ export async function registerRoutes(
       const [membership] = await db.select().from(organizationMembers).where(eq(organizationMembers.userId, user.id));
       if (!membership) return res.status(403).json({ error: "No organization membership" });
 
-      const filePath = getSyncRunFilePath(membership.organizationId, req.params.syncRunId);
+      const filePath = getSyncRunFilePath(membership.organizationId, req.params.syncRunId, user.id);
       if (!filePath) return res.status(404).json({ error: "Sync run not found" });
 
       res.setHeader("Content-Type", "application/json");
