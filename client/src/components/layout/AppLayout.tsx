@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
 import { useUser, useLogout } from "@/hooks/use-user";
+import { api, buildUrl } from "@shared/routes";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -89,6 +90,18 @@ export function AppLayout({ children, appId }: AppLayoutProps) {
   const [activeEnv, setActiveEnv] = useState("Production");
   const { user, organization, role } = useUser();
   const logoutMutation = useLogout();
+  const { data: currentApp } = useQuery<any>({
+    queryKey: ["layout-current-app", appId],
+    queryFn: async () => {
+      if (!appId) return null;
+      const url = buildUrl(api.applications.get.path, { id: appId });
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) return null;
+      return await res.json();
+    },
+    enabled: !!appId,
+    staleTime: 60_000,
+  });
 
   const appNavItems = appId ? [
     { name: "Dashboard", href: `/applications/${appId}`, icon: <LayoutDashboard size={15} /> },
@@ -114,7 +127,8 @@ export function AppLayout({ children, appId }: AppLayoutProps) {
       )}>
         {/* Logo */}
         <div className="h-14 flex items-center px-4 border-b border-white/8 shrink-0 gap-2">
-          <img src="/logo.png" alt="Perviewsis" className="h-7 w-auto shrink-0" />
+          {/*<img src="/logo.png" alt="ObservaIQ" className="h-7 w-auto shrink-0" />*/}
+          <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-primary-foreground">ObservaIQ</span></div>
           <Button variant="ghost" size="icon" className="ml-auto lg:hidden text-slate-400" onClick={() => setIsMobileMenuOpen(false)}>
             <X size={15} />
           </Button>
@@ -133,6 +147,12 @@ export function AppLayout({ children, appId }: AppLayoutProps) {
         <div className="flex-1 overflow-y-auto py-3 px-3 space-y-5">
           {appId && (
             <div>
+              <div className="mb-2 rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-3 py-2">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-indigo-300/80">Current Application</p>
+                <p className="mt-0.5 truncate text-[12px] font-semibold text-indigo-100">
+                  {currentApp?.name ?? `Application ${appId}`}
+                </p>
+              </div>
               <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest mb-1.5 px-1">App Navigation</p>
               <div className="space-y-0.5">
                 {appNavItems.map(item => <NavItem key={item.href} {...item} />)}
@@ -159,10 +179,10 @@ export function AppLayout({ children, appId }: AppLayoutProps) {
           <Link href="/" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[12px] font-medium text-slate-600 hover:bg-red-500/10 hover:text-red-400 transition-colors">
             <LogOut size={14} /> Disconnect
           </Link>
-          <a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer"
+          {/*<a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer"
             className="block text-center text-[9px] text-slate-700 hover:text-slate-500 transition-colors pt-1 pb-0.5">
             Developed by Cosmonaut Technologies
-          </a>
+          </a>*/}
         </div>
       </aside>
 
@@ -258,3 +278,4 @@ export function AppLayout({ children, appId }: AppLayoutProps) {
     </div>
   );
 }
+

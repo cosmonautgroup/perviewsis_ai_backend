@@ -17,12 +17,12 @@ function RiskBadge({ score, label }: { score: number; label: string }) {
   return <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${cls}`}>{label} Risk</span>;
 }
 
-function AppCard({ app, rich }: { app: any; rich: any }) {
+function AppCard({ app, rich, metrics }: { app: any; rich: any; metrics?: { responseTime?: number | null; errorRate?: number | null; throughput?: number | null } }) {
   const fRisk = rich?.forecastRisk;
   const hasMetrics = !!app?.hasMetrics;
-  const responseTime = rich?.responseTime ?? app.avgResponseTime;
-  const errorRate = rich?.errorRate ?? app.errorRate;
-  const throughput = rich?.throughput ?? app.callsPerMinute;
+  const responseTime = metrics?.responseTime ?? app.avgResponseTime;
+  const errorRate = metrics?.errorRate ?? app.errorRate;
+  const throughput = metrics?.throughput ?? app.callsPerMinute;
 
   return (
     <Link href={`/applications/${app.id}`}>
@@ -46,7 +46,7 @@ function AppCard({ app, rich }: { app: any; rich: any }) {
               <p className="text-[10px] text-muted-foreground font-medium mb-1 flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> Response</p>
               {hasMetrics && responseTime != null ? (
                 <p className={`text-sm font-bold font-mono ${responseTime > 2000 ? "text-red-400" : responseTime > 800 ? "text-yellow-500" : "text-green-500"}`}>
-                  {responseTime?.toLocaleString()}ms
+                  {Math.round(Number(responseTime ?? 0)).toLocaleString()}ms
                 </p>
               ) : (
                 <p className="text-sm font-bold font-mono text-muted-foreground">No Data</p>
@@ -65,7 +65,7 @@ function AppCard({ app, rich }: { app: any; rich: any }) {
             <div>
               <p className="text-[10px] text-muted-foreground font-medium mb-1 flex items-center gap-1"><Zap className="w-2.5 h-2.5" /> Throughput</p>
               {hasMetrics && throughput != null ? (
-                <p className="text-sm font-bold font-mono text-foreground">{throughput?.toLocaleString() ?? 0}</p>
+                <p className="text-sm font-bold font-mono text-foreground">{Math.round(Number(throughput ?? 0)).toLocaleString()}</p>
               ) : (
                 <p className="text-sm font-bold font-mono text-muted-foreground">No Data</p>
               )}
@@ -118,18 +118,34 @@ export default function ApplicationsList() {
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d" | "custom">("24h");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+  const [controllerFilter, setControllerFilter] = useState<string>("All");
 
   const appQueryOpts = useMemo(() => {
-    if (timeRange === "24h") return { durationMins: 24 * 60 };
-    if (timeRange === "7d") return { durationMins: 7 * 24 * 60 };
-    if (timeRange === "30d") return { durationMins: 30 * 24 * 60 };
-    if (customStart && customEnd) {
-      const startIso = new Date(`${customStart}T00:00:00`).toISOString();
-      const endIso = new Date(`${customEnd}T23:59:59`).toISOString();
-      return { start: startIso, end: endIso };
+    const base: { durationMins?: number; start?: string; end?: string; controllerId?: number } = {};
+    if (timeRange === "24h") base.durationMins = 24 * 60;
+    else if (timeRange === "7d") base.durationMins = 7 * 24 * 60;
+    else if (timeRange === "30d") base.durationMins = 30 * 24 * 60;
+    else if (customStart && customEnd) {
+      base.start = new Date(`${customStart}T00:00:00`).toISOString();
+      base.end = new Date(`${customEnd}T23:59:59`).toISOString();
+    } else {
+      base.durationMins = 24 * 60;
     }
-    return { durationMins: 24 * 60 };
-  }, [timeRange, customStart, customEnd]);
+    const parsedControllerId = Number(controllerFilter);
+    if (controllerFilter !== "All" && Number.isFinite(parsedControllerId) && parsedControllerId > 0) {
+      base.controllerId = parsedControllerId;
+    }
+    return base;
+  }, [timeRange, customStart, customEnd, controllerFilter]);
+
+  const { data: controllers } = useQuery<any[]>({
+    queryKey: ["/api/apm/credentials"],
+    queryFn: async () => {
+      const res = await fetch("/api/apm/credentials");
+      if (!res.ok) throw new Error("Failed to fetch controllers");
+      return res.json();
+    },
+  });
 
   const { data: applications, isLoading } = useQuery<any[]>({
     queryKey: ["/api/applications", appQueryOpts],
@@ -138,6 +154,7 @@ export default function ApplicationsList() {
       if (appQueryOpts.durationMins) params.set("durationMins", String(appQueryOpts.durationMins));
       if (appQueryOpts.start) params.set("start", appQueryOpts.start);
       if (appQueryOpts.end) params.set("end", appQueryOpts.end);
+      if (appQueryOpts.controllerId) params.set("controllerId", String(appQueryOpts.controllerId));
       const qs = params.toString();
       const url = qs ? `/api/applications?${qs}` : "/api/applications";
       const res = await fetch(url);
@@ -157,20 +174,84 @@ export default function ApplicationsList() {
   const richMap: Record<number, any> = {};
   (applications ?? []).forEach((app, i) => { richMap[app.id] = richQueries[i]?.data; });
 
+  const avgSeries = (rows?: Array<{ value?: number }>) => {
+    const values = (rows ?? [])
+      .map((p) => Number(p?.value ?? NaN))
+      .filter((v): v is number => Number.isFinite(v) && v >= 0);
+    if (values.length === 0) return null;
+    return values.reduce((s, v) => s + v, 0) / values.length;
+  };
+
+  const responseMetricQueries = useQueries({
+    queries: (applications ?? []).map((app) => ({
+      queryKey: [`/api/applications/${app.id}/metrics`, "Response Time", appQueryOpts.durationMins, appQueryOpts.start, appQueryOpts.end],
+      queryFn: async () => {
+        const params = new URLSearchParams();
+        params.set("metricName", "Response Time");
+        if (appQueryOpts.durationMins) params.set("durationMins", String(appQueryOpts.durationMins));
+        if (appQueryOpts.start) params.set("start", appQueryOpts.start);
+        if (appQueryOpts.end) params.set("end", appQueryOpts.end);
+        const res = await fetch(`/api/applications/${app.id}/metrics?${params.toString()}`);
+        if (!res.ok) throw new Error("Failed to fetch response-time metrics");
+        return res.json();
+      },
+      enabled: !!app?.id,
+    })),
+  });
+  const throughputMetricQueries = useQueries({
+    queries: (applications ?? []).map((app) => ({
+      queryKey: [`/api/applications/${app.id}/metrics`, "Calls per Minute", appQueryOpts.durationMins, appQueryOpts.start, appQueryOpts.end],
+      queryFn: async () => {
+        const params = new URLSearchParams();
+        params.set("metricName", "Calls per Minute");
+        if (appQueryOpts.durationMins) params.set("durationMins", String(appQueryOpts.durationMins));
+        if (appQueryOpts.start) params.set("start", appQueryOpts.start);
+        if (appQueryOpts.end) params.set("end", appQueryOpts.end);
+        const res = await fetch(`/api/applications/${app.id}/metrics?${params.toString()}`);
+        if (!res.ok) throw new Error("Failed to fetch throughput metrics");
+        return res.json();
+      },
+      enabled: !!app?.id,
+    })),
+  });
+  const errorMetricQueries = useQueries({
+    queries: (applications ?? []).map((app) => ({
+      queryKey: [`/api/applications/${app.id}/metrics`, "Error Rate", appQueryOpts.durationMins, appQueryOpts.start, appQueryOpts.end],
+      queryFn: async () => {
+        const params = new URLSearchParams();
+        params.set("metricName", "Error Rate");
+        if (appQueryOpts.durationMins) params.set("durationMins", String(appQueryOpts.durationMins));
+        if (appQueryOpts.start) params.set("start", appQueryOpts.start);
+        if (appQueryOpts.end) params.set("end", appQueryOpts.end);
+        const res = await fetch(`/api/applications/${app.id}/metrics?${params.toString()}`);
+        if (!res.ok) throw new Error("Failed to fetch error-rate metrics");
+        return res.json();
+      },
+      enabled: !!app?.id,
+    })),
+  });
+
+  const responseTimeMap: Record<number, number | null> = {};
+  const throughputMap: Record<number, number | null> = {};
+  const errorRateMap: Record<number, number | null> = {};
+  (applications ?? []).forEach((app, i) => {
+    responseTimeMap[app.id] = avgSeries(responseMetricQueries[i]?.data);
+    throughputMap[app.id] = avgSeries(throughputMetricQueries[i]?.data);
+    errorRateMap[app.id] = avgSeries(errorMetricQueries[i]?.data);
+  });
+
   const filtered = (applications ?? []).filter(app => {
     const matchSearch = app.name.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "All" || app.status === statusFilter;
     return matchSearch && matchStatus;
   });
   const sortedFiltered = [...filtered].sort((a, b) => {
-    const aRich = richMap[a.id];
-    const bRich = richMap[b.id];
-    const aResp = Number(aRich?.responseTime ?? a.avgResponseTime ?? 0);
-    const aErr = Number(aRich?.errorRate ?? a.errorRate ?? 0);
-    const aTput = Number(aRich?.throughput ?? a.callsPerMinute ?? 0);
-    const bResp = Number(bRich?.responseTime ?? b.avgResponseTime ?? 0);
-    const bErr = Number(bRich?.errorRate ?? b.errorRate ?? 0);
-    const bTput = Number(bRich?.throughput ?? b.callsPerMinute ?? 0);
+    const aResp = Number(responseTimeMap[a.id] ?? a.avgResponseTime ?? 0);
+    const aErr = Number(errorRateMap[a.id] ?? a.errorRate ?? 0);
+    const aTput = Number(throughputMap[a.id] ?? a.callsPerMinute ?? 0);
+    const bResp = Number(responseTimeMap[b.id] ?? b.avgResponseTime ?? 0);
+    const bErr = Number(errorRateMap[b.id] ?? b.errorRate ?? 0);
+    const bTput = Number(throughputMap[b.id] ?? b.callsPerMinute ?? 0);
     const aHasData = !!a?.hasMetrics && (aResp > 0 || aErr > 0 || aTput > 0);
     const bHasData = !!b?.hasMetrics && (bResp > 0 || bErr > 0 || bTput > 0);
     if (aHasData !== bHasData) return aHasData ? -1 : 1;
@@ -227,6 +308,18 @@ export default function ApplicationsList() {
               </button>
             ))}
           </div>
+          <select
+            value={controllerFilter}
+            onChange={(e) => setControllerFilter(e.target.value)}
+            className="h-9 rounded-md border border-border bg-card px-3 text-xs text-foreground"
+          >
+            <option value="All">All Controllers</option>
+            {(controllers ?? []).map((c: any) => (
+              <option key={c.id} value={String(c.id)}>
+                {c.label ?? `Controller ${c.id}`} ({c.source === "appdynamics" ? "AppDynamics" : "Dynatrace"})
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Time range */}
@@ -292,7 +385,16 @@ export default function ApplicationsList() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {sortedFiltered.map(app => (
-              <AppCard key={app.id} app={app} rich={richMap[app.id]} />
+              <AppCard
+                key={app.id}
+                app={app}
+                rich={richMap[app.id]}
+                metrics={{
+                  responseTime: responseTimeMap[app.id],
+                  errorRate: errorRateMap[app.id],
+                  throughput: throughputMap[app.id],
+                }}
+              />
             ))}
           </div>
         )}

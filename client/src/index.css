@@ -149,6 +149,7 @@
 .text-status-warning { color: hsl(38 92% 50%); }
 .text-status-critical { color: hsl(0 84% 60%); }
 .border-status-critical { border-color: hsl(0 84% 60%); }
+.bg-logo { background-color: hsl(36 91% 52%); }
 
 .custom-recharts-tooltip {
   background: hsl(var(--card));

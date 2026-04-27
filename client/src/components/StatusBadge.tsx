@@ -4,13 +4,14 @@ import { CheckCircle2, AlertTriangle, XCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface StatusBadgeProps {
-  status: string;
+  status?: string | null;
   className?: string;
   showIcon?: boolean;
 }
 
 export function StatusBadge({ status, className, showIcon = true }: StatusBadgeProps) {
-  const normalizedStatus = status.toLowerCase();
+  const displayStatus = typeof status === "string" && status.trim().length > 0 ? status : "Unknown";
+  const normalizedStatus = displayStatus.toLowerCase();
   
   let variant: "default" | "secondary" | "destructive" | "outline" = "default";
   let icon = null;
@@ -36,7 +37,7 @@ export function StatusBadge({ status, className, showIcon = true }: StatusBadgeP
   return (
     <Badge variant={variant} className={cn("px-2.5 py-0.5 font-medium whitespace-nowrap", colorClass, className)}>
       {showIcon && icon}
-      {status}
+      {displayStatus}
     </Badge>
   );
 }

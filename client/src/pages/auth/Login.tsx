@@ -10,9 +10,11 @@ import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const query = new URLSearchParams(location.split("?")[1] ?? "");
+  const isVerified = query.get("verified") === "1";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -22,7 +24,9 @@ export default function Login() {
       const res = await apiRequest("POST", "/api/auth/login", data);
       if (!res.ok) {
         const body = await res.json();
-        throw new Error(body.error ?? "Login failed");
+        const err: any = new Error(body.error ?? "Login failed");
+        err.code = body.code;
+        throw err;
       }
       return res.json();
     },
@@ -30,15 +34,44 @@ export default function Login() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       navigate("/applications");
     },
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: async (targetEmail: string) => {
+      const res = await apiRequest("POST", "/api/auth/resend-verification", { email: targetEmail });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? "Could not resend verification");
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Verification email sent",
+        description: data?.verificationEmailSent
+          ? "Check your inbox for the verification link."
+          : `Email provider is not configured. Use this link for now: ${data?.verificationPreviewUrl ?? "N/A"}`,
+      });
+    },
     onError: (err: any) => {
-      toast({ title: "Login failed", description: err.message, variant: "destructive" });
+      toast({ title: "Resend failed", description: err.message, variant: "destructive" });
     },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) return;
-    loginMutation.mutate({ email, password });
+    loginMutation.mutate(
+      { email, password },
+      {
+        onError: (err: any) => {
+          toast({ title: "Login failed", description: err.message, variant: "destructive" });
+          if (err?.code === "EMAIL_NOT_VERIFIED") {
+            resendMutation.mutate(email);
+          }
+        },
+      },
+    );
   };
 
   return (
@@ -46,7 +79,8 @@ export default function Login() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
-          <img src="/logo.png" alt="Perviewsis" className="h-12 w-auto" />
+          {/*<img src="/logo.png" alt="ObservaIQ" className="h-12 w-auto" />*/}
+          <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-foreground">ObservaIQ</span></div>
           <p className="text-sm text-muted-foreground">AI-Powered Observability Platform</p>
         </div>
 
@@ -56,6 +90,11 @@ export default function Login() {
             <CardDescription>Enter your credentials to access your organization's dashboard</CardDescription>
           </CardHeader>
           <CardContent>
+            {isVerified && (
+              <div className="mb-4 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm text-green-500">
+                Account verified successfully. Please sign in.
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
@@ -117,16 +156,28 @@ export default function Login() {
                 Create one
               </button>
             </div>
+            <div className="mt-2 text-center text-xs text-muted-foreground">
+              Didn&apos;t get verification email?{" "}
+              <button
+                type="button"
+                onClick={() => email && resendMutation.mutate(email)}
+                className="text-primary hover:underline font-medium disabled:opacity-50"
+                disabled={!email || resendMutation.isPending}
+              >
+                {resendMutation.isPending ? "Sending..." : "Resend"}
+              </button>
+            </div>
           </CardContent>
         </Card>
 
-        <p className="text-center text-xs text-muted-foreground">
+        {/*<p className="text-center text-xs text-muted-foreground">
           Developed by{" "}
           <a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
             Cosmonaut Technologies
           </a>
-        </p>
+        </p>*/}
       </div>
     </div>
   );
 }
+

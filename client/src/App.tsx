@@ -17,7 +17,9 @@ import ApplicationDashboard from "./pages/applications/ApplicationDashboard";
 import ApplicationIncidents from "./pages/applications/ApplicationIncidents";
 import ApplicationForecast from "./pages/applications/ApplicationForecast";
 import ApplicationCapacity from "./pages/applications/ApplicationCapacity";
+import TierNodes from "./pages/applications/TierNodes";
 import CapacityPlanningGlobal from "./pages/capacity/CapacityPlanningGlobal";
+import CapacityNodesDrilldown from "./pages/capacity/CapacityNodesDrilldown";
 import ClusterCapacity from "./pages/capacity/ClusterCapacity";
 import CapacityRiskDetail from "./pages/capacity/CapacityRiskDetail";
 import ProblemDetail from "./pages/problems/ProblemDetail";
@@ -34,6 +36,8 @@ import ServiceRiskRanking from "./pages/ai/ServiceRiskRanking";
 import InsightNavigator from "./pages/ai/InsightNavigator";
 import ServersList from "./pages/applications/ServersList";
 import ServerDetail from "./pages/applications/ServerDetail";
+import TransactionDrilldown from "./pages/applications/TransactionDrilldown";
+import ServiceRiskDrilldown from "./pages/applications/ServiceRiskDrilldown";
 import IncidentDetail from "./pages/incidents/IncidentDetail";
 import IncidentsDashboard from "./pages/incidents/IncidentsDashboard";
 import AlertsDashboard from "./pages/alerts/AlertsDashboard";
@@ -60,11 +64,16 @@ function Router() {
         <Route path="/applications/:id/incidents" component={ApplicationIncidents} />
         <Route path="/applications/:id/forecast" component={ApplicationForecast} />
         <Route path="/applications/:id/capacity" component={ApplicationCapacity} />
+        <Route path="/applications/:id/tier-nodes" component={TierNodes} />
         <Route path="/capacity-planning/detail/:riskId" component={CapacityRiskDetail} />
         <Route path="/capacity-planning/cluster/:clusterId" component={ClusterCapacity} />
+        <Route path="/capacity-planning/nodes" component={CapacityNodesDrilldown} />
         <Route path="/capacity-planning" component={CapacityPlanningGlobal} />
         <Route path="/problems/:id" component={ProblemDetail} />
+        <Route path="/applications/:id/tier-nodes/:serverId" component={ServerDetail} />
         <Route path="/applications/:id/servers/:serverId" component={ServerDetail} />
+        <Route path="/applications/:id/transactions/:txId" component={TransactionDrilldown} />
+        <Route path="/applications/:id/service-risks/:service" component={ServiceRiskDrilldown} />
         <Route path="/applications/:id/servers" component={ServersList} />
         <Route path="/incidents" component={IncidentsDashboard} />
         <Route path="/incidents/:incidentId" component={IncidentDetail} />

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -25,13 +25,13 @@ const SEV_CLASSES: Record<string, string> = {
 };
 
 const TYPE_ICON: Record<string, any> = {
-  "5xx – Internal Server Error": <Flame className="w-3.5 h-3.5 text-red-400" />,
-  "5xx – Service Unavailable": <Flame className="w-3.5 h-3.5 text-red-400" />,
-  "5xx – Gateway Timeout": <Wifi className="w-3.5 h-3.5 text-orange-400" />,
+  "5xx â€“ Internal Server Error": <Flame className="w-3.5 h-3.5 text-red-400" />,
+  "5xx â€“ Service Unavailable": <Flame className="w-3.5 h-3.5 text-red-400" />,
+  "5xx â€“ Gateway Timeout": <Wifi className="w-3.5 h-3.5 text-orange-400" />,
   "Database Error": <Database className="w-3.5 h-3.5 text-blue-400" />,
-  "Timeout – External API": <Wifi className="w-3.5 h-3.5 text-orange-400" />,
+  "Timeout â€“ External API": <Wifi className="w-3.5 h-3.5 text-orange-400" />,
   "JVM Warning": <AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />,
-  "Client Error – 429": <AlertTriangle className="w-3.5 h-3.5 text-blue-400" />,
+  "Client Error â€“ 429": <AlertTriangle className="w-3.5 h-3.5 text-blue-400" />,
 };
 
 const CLUSTER_COLOR_PALETTE = ["#ef4444", "#f97316", "#3b82f6", "#8b5cf6", "#22c55e", "#ec4899", "#14b8a6", "#eab308"];
@@ -99,16 +99,35 @@ function inferClusterMeta(cluster: any) {
   const topSev = (cluster?.errors ?? []).reduce((best: string, e: any) =>
     (sevRank[e.severity] ?? 0) > (sevRank[best] ?? 0) ? e.severity : best
   , "Low");
-  const rootCause = first?.message
-    ? `Most frequent signature: ${String(first.message).slice(0, 220)}`
+  const firstMsg = String(first?.message ?? first?.rootCause ?? "").trim();
+  const firstType = String(first?.type ?? "").trim();
+  const exceptionFromMsg = firstMsg.match(/\b([A-Za-z0-9_$.]*(Exception|Error))\b/)?.[1] ?? "";
+  const normalizedType = (exceptionFromMsg || firstType || "Application Error").trim();
+  const rootCause = firstMsg
+    ? firstMsg.slice(0, 220)
     : "No detailed root cause text available from provider for this cluster.";
   const action = first?.recommendation ?? "Open the error detail and inspect correlated alerts/incidents for remediation path.";
+  const requestPath = String(first?.requestPath ?? first?.callToCheck ?? "").trim();
   return {
-    label: first?.type ? `${first.type} Cluster` : `Cluster ${cluster?.clusterId}`,
+    label: requestPath
+      ? `${normalizedType}: ${requestPath}`
+      : `${normalizedType}: ${rootCause.slice(0, 72)}`,
     rootCause,
     confidence: topSev === "Critical" ? 92 : topSev === "High" ? 84 : topSev === "Medium" ? 72 : 60,
     action,
   };
+}
+
+function clusterSignatureFor(e: any) {
+  const src = String(e?.source ?? "").toLowerCase();
+  const type = String(e?.type ?? "Application Error").trim().toLowerCase();
+  const path = String(e?.requestPath ?? "").trim().toLowerCase();
+  const root = String(e?.rootCause ?? e?.message ?? "").trim().toLowerCase();
+  if (src === "appdynamics") {
+    const normalizedRoot = root.replace(/\s+/g, " ").slice(0, 180);
+    return `SIG:${type}|${path}|${normalizedRoot}`;
+  }
+  return String(e?.clusterId ?? `${type}|${path}|${root.slice(0, 80)}`);
 }
 
 export default function ErrorsDashboard() {
@@ -116,6 +135,7 @@ export default function ErrorsDashboard() {
   const initialAppId = urlParams.get("appId") ?? "";
   const initialType = urlParams.get("type") ?? "";
   const initialSearch = urlParams.get("q") ?? "";
+  const sourceIncidentId = urlParams.get("incidentId") ?? "";
   const [dateRange, setDateRange]       = useState<DatePreset>("All");
   const [customFrom, setCustomFrom]     = useState("");
   const [customTo, setCustomTo]         = useState("");
@@ -133,16 +153,53 @@ export default function ErrorsDashboard() {
       return res.json();
     },
   });
+  const { data: relatedFromIncident } = useQuery<any>({
+    queryKey: ["/api/incidents/related-drilldown", sourceIncidentId],
+    queryFn: () => fetch(`/api/incidents/${sourceIncidentId}/related`).then((r) => r.json()),
+    enabled: !!sourceIncidentId,
+    staleTime: 30000,
+  });
+  const { data: incidentDetail } = useQuery<any>({
+    queryKey: ["/api/incidents/detail-drilldown", sourceIncidentId],
+    queryFn: () => fetch(`/api/incidents/${sourceIncidentId}`).then((r) => r.json()),
+    enabled: !!sourceIncidentId,
+    staleTime: 30000,
+  });
+  const errorsById = new Map<string, any>((errors ?? []).map((e) => [String(e.errorId ?? ""), e]));
+  const relatedErrorIds = new Set<string>(
+    Array.isArray(relatedFromIncident?.errors)
+      ? (relatedFromIncident.errors as any[]).map((re: any) => String(re.errorId ?? "")).filter(Boolean)
+      : [],
+  );
+  const incidentAppId = String(incidentDetail?.applicationId ?? initialAppId ?? "").trim();
+  const incidentAppName = String(
+    incidentDetail?.applicationName
+    ?? incidentDetail?.affectedApplications?.[0]?.name
+    ?? "",
+  ).trim().toLowerCase();
+  const appScopedErrors = (errors ?? []).filter((e: any) => {
+    const byId = incidentAppId ? String(e.appId ?? "").trim() === incidentAppId : false;
+    const byName = incidentAppName ? String(e.applicationName ?? "").trim().toLowerCase() === incidentAppName : false;
+    if (incidentAppId || incidentAppName) return byId || byName;
+    return true;
+  });
+  const exactRelatedLive = appScopedErrors.filter((e: any) => relatedErrorIds.has(String(e.errorId ?? "")));
+  const incidentScopedErrors = sourceIncidentId
+    ? (exactRelatedLive.length > 0
+      ? exactRelatedLive
+      : appScopedErrors.slice(0, Math.max(1, relatedErrorIds.size || 4)))
+    : [];
+  const baseErrors = sourceIncidentId ? incidentScopedErrors : (errors ?? []);
 
   const { from: dateCutoffFrom, to: dateCutoffTo } = getDateCutoffs(dateRange, customFrom, customTo);
 
-  const filtered = (errors ?? []).filter(e => {
+  const filtered = baseErrors.filter(e => {
     const ts: number = e.timestamp ?? e.lastSeen ?? 0;
     if (dateCutoffFrom !== null && ts < dateCutoffFrom) return false;
     if (dateCutoffTo !== null && ts > dateCutoffTo) return false;
     if (appFilter && String(e.appId ?? "") !== String(appFilter)) return false;
     if (typeFilter && !(String(e.type ?? "").toLowerCase().includes(typeFilter.toLowerCase()) || String(e.message ?? "").toLowerCase().includes(typeFilter.toLowerCase()))) return false;
-    if (selectedCluster !== null && e.clusterId !== selectedCluster) return false;
+    if (selectedCluster !== null && clusterSignatureFor(e) !== selectedCluster) return false;
     if (search !== "" &&
       !e.message?.toLowerCase().includes(search.toLowerCase()) &&
       !e.service?.toLowerCase().includes(search.toLowerCase()) &&
@@ -185,9 +242,10 @@ export default function ErrorsDashboard() {
 
   const clusters = Object.entries(
     filtered.reduce((acc: any, e) => {
-      if (!acc[e.clusterId]) acc[e.clusterId] = { clusterId: e.clusterId, errors: [], totalCount: 0 };
-      acc[e.clusterId].errors.push(e);
-      acc[e.clusterId].totalCount += e.count;
+      const key = clusterSignatureFor(e);
+      if (!acc[key]) acc[key] = { clusterId: key, errors: [], totalCount: 0 };
+      acc[key].errors.push(e);
+      acc[key].totalCount += Number(e.count ?? 1);
       return acc;
     }, {})
   ).map(([, v]) => v).sort((a: any, b: any) => b.totalCount - a.totalCount);
@@ -300,7 +358,7 @@ export default function ErrorsDashboard() {
               <CardTitle className="text-sm font-semibold">Error Rate Over Time</CardTitle>
               <span className="text-xs text-muted-foreground">
                 {dateRange === "Custom" && customFrom && customTo
-                  ? `${customFrom} → ${customTo}`
+                  ? `${customFrom} â†’ ${customTo}`
                   : dateRange === "All" ? "All time" : `Last ${dateRange}`}
               </span>
             </CardHeader>
@@ -398,7 +456,7 @@ export default function ErrorsDashboard() {
                 {clusters.map((cluster: any, idx: number) => {
                   const meta = CLUSTER_META[cluster.clusterId] ?? inferClusterMeta(cluster);
                   const isExpanded = expandedCluster === cluster.clusterId;
-                  const clusterErrors = filtered.filter(e => e.clusterId === cluster.clusterId);
+                  const clusterErrors = Array.isArray(cluster.errors) ? cluster.errors : [];
                   if (filtered.length > 0 && clusterErrors.length === 0) return null;
                   return (
                     <Card key={cluster.clusterId} className={`border shadow-sm transition-all ${selectedCluster === cluster.clusterId ? "border-primary/40 bg-primary/5" : "border-border"}`}>
@@ -462,7 +520,7 @@ export default function ErrorsDashboard() {
                                       </p>
                                     )}
                                     <p className="text-[10px] text-muted-foreground mt-1">
-                                      {e.service} · {e.server} · {(e.timestamp ?? e.lastSeen) ? formatDistanceToNow(new Date(e.timestamp ?? e.lastSeen), { addSuffix: true }) : "—"}
+                                      {e.service} Â· {e.server} Â· {(e.timestamp ?? e.lastSeen) ? formatDistanceToNow(new Date(e.timestamp ?? e.lastSeen), { addSuffix: true }) : "â€”"}
                                     </p>
                                   </div>
                                     {e.recommendation && (
@@ -473,8 +531,8 @@ export default function ErrorsDashboard() {
                                   <div className="text-right shrink-0 space-y-1">
                                     <p className="text-sm font-bold text-red-400">{e.count.toLocaleString()}</p>
                                     <p className="text-[10px] text-muted-foreground">occurrences</p>
-                                    <Link href={`/errors/${e.errorId}`} className="text-[10px] text-green-400 hover:underline block">Open Recommendation ↗</Link>
-                                    <Link href={`/errors/${e.errorId}`} className="text-xs text-primary hover:underline block">Detail →</Link>
+                                    <Link href={`/errors/${e.errorId}`} className="text-[10px] text-green-400 hover:underline block">Open Recommendation â†—</Link>
+                                    <Link href={`/errors/${e.errorId}`} className="text-xs text-primary hover:underline block">Detail â†’</Link>
                                   </div>
                                 </div>
                               </div>
@@ -508,3 +566,4 @@ export default function ErrorsDashboard() {
     </AppLayout>
   );
 }
+

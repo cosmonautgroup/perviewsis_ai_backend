@@ -40,6 +40,11 @@ function SourceBadge({ source }: { source: string }) {
   return <Badge className={`border text-xs ${cls}`}>{s}</Badge>;
 }
 
+function maskCredentialText(value?: string | null) {
+  if (!value) return "********";
+  return "********";
+}
+
 function SyncStatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     success: "bg-green-500/10 text-green-400 border-green-500/20",
@@ -85,7 +90,7 @@ function CredentialCard({ cred, onDelete, onSync }: { cred: any; onDelete: () =>
             </div>
             <div>
               <p className="font-bold text-sm text-foreground">{cred.label}</p>
-              <p className="text-xs text-muted-foreground font-mono truncate max-w-48">{cred.controllerUrl}</p>
+              <p className="text-xs text-muted-foreground font-mono truncate max-w-48">{maskCredentialText(cred.controllerUrl)}</p>
             </div>
           </div>
           <SourceBadge source={cred.source} />
@@ -93,10 +98,10 @@ function CredentialCard({ cred, onDelete, onSync }: { cred: any; onDelete: () =>
 
         <div className="space-y-2 mb-4 text-xs text-muted-foreground">
           {cred.account && (
-            <div className="flex gap-2 items-center"><Server className="w-3.5 h-3.5" /> Account: <span className="text-foreground font-mono">{cred.account}</span></div>
+            <div className="flex gap-2 items-center"><Server className="w-3.5 h-3.5" /> Account: <span className="text-foreground font-mono">{maskCredentialText(cred.account)}</span></div>
           )}
           {cred.username && (
-            <div className="flex gap-2 items-center"><GitBranch className="w-3.5 h-3.5" /> User: <span className="text-foreground font-mono">{cred.username}</span></div>
+            <div className="flex gap-2 items-center"><GitBranch className="w-3.5 h-3.5" /> User: <span className="text-foreground font-mono">{maskCredentialText(cred.username)}</span></div>
           )}
           <div className="flex gap-2 items-center">
             <Clock className="w-3.5 h-3.5" />
@@ -254,9 +259,11 @@ function SyncStatusPanel({ syncStatus }: { syncStatus: any }) {
 // ─── Add Credential Dialog ────────────────────────────────────────────────────
 function AddCredentialDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { toast } = useToast();
+  const randomLabel = (source: string) =>
+    `${source === "appdynamics" ? "AppD" : "Dynatrace"}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const [form, setForm] = useState({
     source: "appdynamics",
-    label: "",
+    label: randomLabel("appdynamics"),
     controllerUrl: "",
     account: "",
     username: "",
@@ -348,7 +355,14 @@ function AddCredentialDialog({ open, onClose }: { open: boolean; onClose: () => 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label>Source</Label>
-            <Select value={form.source} onValueChange={v => { set("source", v); setTestResult(null); }}>
+            <Select value={form.source} onValueChange={v => {
+              setForm((f) => ({
+                ...f,
+                source: v,
+                label: (f.label || "").trim() ? f.label : randomLabel(v),
+              }));
+              setTestResult(null);
+            }}>
               <SelectTrigger data-testid="select-cred-source"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="appdynamics">AppDynamics</SelectItem>
@@ -371,7 +385,7 @@ function AddCredentialDialog({ open, onClose }: { open: boolean; onClose: () => 
               <div className="space-y-1.5">
                 <Label>Account Name</Label>
                 <Input placeholder="mycompany-nfr" value={form.account} onChange={e => set("account", e.target.value)} />
-                <p className="text-xs text-muted-foreground">Auto-filled from your Controller URL. This is the subdomain — e.g. <span className="font-mono">niit-technologies-nfr</span> from <span className="font-mono">niit-technologies-nfr.saas.appdynamics.com</span></p>
+                <p className="text-xs text-muted-foreground">Auto-filled from your Controller URL. This is the subdomain — e.g. <span className="font-mono">acme-monitoring-prod</span> from <span className="font-mono">acme-monitoring-prod.saas.appdynamics.com</span></p>
               </div>
               <div className="space-y-1.5">
                 <Label>Username</Label>
@@ -416,7 +430,7 @@ function AddCredentialDialog({ open, onClose }: { open: boolean; onClose: () => 
           <Button
             data-testid="button-confirm-add-credential"
             onClick={() => createMutation.mutate({
-              source: form.source, label: form.label || "Default",
+              source: form.source, label: (form.label || "").trim() || randomLabel(form.source),
               controllerUrl: form.controllerUrl,
               account: form.account, username: form.username,
               password: form.password, apiToken: form.apiToken,
@@ -489,7 +503,7 @@ export default function Integrations() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-foreground mb-1">Integrations</h1>
-            <p className="text-muted-foreground text-sm">Connect AppDynamics and Dynatrace to sync live observability data into Perviewsis.</p>
+            <p className="text-muted-foreground text-sm">Connect AppDynamics and Dynatrace to sync live observability data into ObservaIQ.</p>
           </div>
           <div className="flex gap-2">
             <Button

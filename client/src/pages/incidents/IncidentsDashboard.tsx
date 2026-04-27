@@ -5,6 +5,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ShieldAlert, Search, ChevronRight, Clock, CheckCircle2,
   AlertTriangle, BrainCircuit, Activity, CalendarDays
@@ -59,17 +60,30 @@ function getDateCutoffs(preset: DatePreset, customFrom: string, customTo: string
 
 export default function IncidentsDashboard() {
   const [search, setSearch]             = useState("");
+  const [appFilter, setAppFilter]       = useState("All");
   const [sevFilter, setSevFilter]       = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [dateRange, setDateRange]       = useState<DatePreset>("All");
   const [customFrom, setCustomFrom]     = useState("");
   const [customTo, setCustomTo]         = useState("");
 
-  const { data: incidents, isLoading } = useQuery<any[]>({ queryKey: ["/api/incidents"] });
+  const { data: incidents, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/incidents"],
+    queryFn: async () => {
+      const res = await fetch("/api/incidents", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch incidents");
+      return await res.json();
+    },
+    // Prevent stale cached empty lists from sticking on this global dashboard.
+    refetchOnMount: "always",
+    staleTime: 0,
+  });
 
   const { from: dateCutoffFrom, to: dateCutoffTo } = getDateCutoffs(dateRange, customFrom, customTo);
+  const appNames = ["All", ...Array.from(new Set((incidents ?? []).map(inc => inc.applicationName).filter(Boolean)))];
+  const scopedIncidents = (incidents ?? []).filter(inc => appFilter === "All" || inc.applicationName === appFilter);
 
-  const filtered = (incidents ?? []).filter(inc => {
+  const filtered = scopedIncidents.filter(inc => {
     const ts: number = inc.startTime;
     if (dateCutoffFrom !== null && ts < dateCutoffFrom) return false;
     if (dateCutoffTo !== null && ts > dateCutoffTo) return false;
@@ -83,10 +97,10 @@ export default function IncidentsDashboard() {
   });
 
   const counts = {
-    total:    incidents?.length ?? 0,
-    critical: incidents?.filter(i => i.severity === "Critical").length ?? 0,
-    open:     incidents?.filter(i => i.status === "Open" || i.status === "Active").length ?? 0,
-    resolved: incidents?.filter(i => i.status === "Resolved").length ?? 0,
+    total:    scopedIncidents.length,
+    critical: scopedIncidents.filter(i => i.severity === "Critical").length,
+    open:     scopedIncidents.filter(i => i.status === "Open" || i.status === "Active").length,
+    resolved: scopedIncidents.filter(i => i.status === "Resolved").length,
   };
 
   return (
@@ -180,6 +194,19 @@ export default function IncidentsDashboard() {
               onChange={e => setSearch(e.target.value)}
               data-testid="input-search-incidents"
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Application:</span>
+            <Select value={appFilter} onValueChange={setAppFilter}>
+              <SelectTrigger data-testid="select-incident-application" className="h-8 text-xs w-[220px]">
+                <SelectValue placeholder="All applications" />
+              </SelectTrigger>
+              <SelectContent>
+                {appNames.map((name) => (
+                  <SelectItem key={name} value={name}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex gap-1 flex-wrap">
             {SEVERITIES.map(s => (
@@ -317,7 +344,7 @@ export default function IncidentsDashboard() {
                           <td className="px-5 py-4">
                             <Link
                               href={`/incidents/${inc.incidentId}`}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs"
+                              className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs"
                               data-testid={`link-incident-${inc.incidentId}`}
                             >
                               Investigate <ChevronRight className="w-3 h-3" />
@@ -334,14 +361,14 @@ export default function IncidentsDashboard() {
         </Card>
 
         {/* AI Summary footer */}
-        {!isLoading && incidents && incidents.length > 0 && (
+        {!isLoading && scopedIncidents.length > 0 && (
           <Card className="border border-indigo-500/20 bg-card">
             <CardContent className="p-4 flex items-start gap-3">
               <BrainCircuit className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" />
               <div>
                 <p className="text-sm font-semibold text-foreground mb-1">AI Incident Summary</p>
                 <p className="text-sm text-muted-foreground">
-                  {counts.critical} critical incident{counts.critical !== 1 ? "s" : ""} detected across {new Set(incidents.map(i => i.applicationName)).size} applications.{" "}
+                  {counts.critical} critical incident{counts.critical !== 1 ? "s" : ""} detected across {new Set(scopedIncidents.map(i => i.applicationName)).size} applications.{" "}
                   {counts.open > 0
                     ? `${counts.open} incident${counts.open !== 1 ? "s" : ""} remain open and require immediate attention.`
                     : "All incidents have been resolved."}{" "}

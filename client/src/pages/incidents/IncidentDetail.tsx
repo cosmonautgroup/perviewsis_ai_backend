@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
 import CapacityRiskBacklinks from "@/components/capacity/CapacityRiskBacklinks";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,6 +109,7 @@ export default function IncidentDetail() {
   const { incidentId } = useParams<{ incidentId: string }>();
   const [note, setNote] = useState("");
   const [showRemediationPreview, setShowRemediationPreview] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: inc, isLoading } = useQuery<any>({
     queryKey: [`/api/incidents/${incidentId}`],
@@ -119,6 +120,30 @@ export default function IncidentDetail() {
     queryKey: [`/api/incidents/${incidentId}/related`],
     queryFn: () => fetch(`/api/incidents/${incidentId}/related`).then(r => r.json()),
     enabled: !!incidentId,
+  });
+
+  const addNoteMutation = useMutation({
+    mutationFn: async (content: string) => {
+      const res = await fetch(`/api/incidents/${incidentId}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content }),
+      });
+      if (!res.ok) {
+        let msg = "Failed to add note";
+        try {
+          const body = await res.json();
+          msg = body?.error ?? msg;
+        } catch {}
+        throw new Error(msg);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setNote("");
+      queryClient.invalidateQueries({ queryKey: [`/api/incidents/${incidentId}`] });
+    },
   });
 
   if (isLoading) return (
@@ -132,7 +157,14 @@ export default function IncidentDetail() {
       <div className="space-y-5 max-w-screen-2xl">
 
         {/* ── CORRELATION CONTEXT BAR ── */}
-        {incidentId && <CorrelationContextBar entityId={incidentId} entityType="incident" />}
+        {incidentId && (
+          <CorrelationContextBar
+            entityId={incidentId}
+            entityType="incident"
+            applicationId={inc?.applicationId ?? inc?.affectedApplications?.[0]?.id ?? null}
+            sourceIncidentId={incidentId}
+          />
+        )}
 
         {/* ── TOP SUMMARY PANEL ── */}
         <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
@@ -241,7 +273,7 @@ export default function IncidentDetail() {
                           <span className="text-xs font-medium text-foreground">{s.name}</span>
                           <SeverityBadge label={s.severity} />
                         </div>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{s.errors[0]}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{(Array.isArray(s.errors) ? s.errors[0] : null) ?? "No error details"}</p>
                         <p className="text-[10px] text-red-400 font-medium">+{s.errorRateDelta}% errors</p>
                       </div>
                     ))}
@@ -252,13 +284,13 @@ export default function IncidentDetail() {
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Servers</p>
                   <div className="space-y-2">
                     {inc?.affectedServers?.map((s: any) => (
-                      <Link key={s.id} href={`/applications/1/servers/${s.id}`}>
+                      <Link key={s.id} href={`/applications/${inc?.applicationId ?? inc?.affectedApplications?.[0]?.id}/servers/${s.id}`}>
                         <div className={`rounded-lg border px-3 py-2 cursor-pointer hover:border-primary/30 transition-colors ${s.severity === "Critical" ? "border-red-500/20 bg-red-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <Server className="w-3 h-3 text-muted-foreground" />
                             <span className="text-xs font-mono font-medium text-foreground">{s.name}</span>
                           </div>
-                          {s.problems.map((p: string) => (
+                          {(Array.isArray(s.problems) ? s.problems : []).map((p: string) => (
                             <p key={p} className="text-[10px] text-muted-foreground">· {p}</p>
                           ))}
                         </div>
@@ -341,7 +373,15 @@ export default function IncidentDetail() {
                   <tbody className="divide-y divide-border">
                     {inc?.affectedTransactions?.map((tx: any) => (
                       <tr key={tx.id} className="hover:bg-muted/20">
-                        <td className="px-5 py-3 font-medium text-foreground">{tx.name}</td>
+                        <td className="px-5 py-3 font-medium text-foreground">
+                          {inc?.applicationId && tx?.id && !String(tx.id).startsWith("tx-") ? (
+                            <Link href={`/applications/${inc.applicationId}/transactions/${tx.id}`} className="text-primary hover:underline">
+                              {tx.name}
+                            </Link>
+                          ) : (
+                            tx.name
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-right text-red-400 font-mono font-bold">-{tx.throughputDrop}%</td>
                         <td className="px-5 py-3 text-right font-mono text-red-400">+{tx.errorSpike}%</td>
                         <td className="px-5 py-3 text-right font-mono text-foreground">{tx.avgResponseTime.toLocaleString()}ms</td>
@@ -353,6 +393,13 @@ export default function IncidentDetail() {
                         </td>
                       </tr>
                     ))}
+                    {(!inc?.affectedTransactions || inc.affectedTransactions.length === 0) && (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-6 text-center text-xs text-muted-foreground">
+                          No affected transactions available for this incident.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </CardContent>
@@ -377,13 +424,36 @@ export default function IncidentDetail() {
                   <tbody className="divide-y divide-border">
                     {inc?.traces?.map((t: any) => (
                       <tr key={t.traceId} className="hover:bg-muted/20">
-                        <td className="px-5 py-3 font-mono text-xs text-indigo-400">{t.traceId}</td>
-                        <td className="px-5 py-3 font-mono text-xs text-foreground">{t.name}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-indigo-400">
+                          {inc?.applicationId && t?.txId ? (
+                            <Link href={`/applications/${inc.applicationId}/transactions/${t.txId}`} className="text-indigo-400 hover:underline">
+                              {t.traceId}
+                            </Link>
+                          ) : (
+                            t.traceId
+                          )}
+                        </td>
+                        <td className="px-5 py-3 font-mono text-xs text-foreground">
+                          {inc?.applicationId && t?.txId ? (
+                            <Link href={`/applications/${inc.applicationId}/transactions/${t.txId}`} className="hover:underline">
+                              {t.name}
+                            </Link>
+                          ) : (
+                            t.name
+                          )}
+                        </td>
                         <td className="px-5 py-3 text-right font-mono text-red-400 font-bold">{t.duration.toLocaleString()}ms</td>
                         <td className="px-5 py-3 text-right font-mono text-muted-foreground">{t.spanCount}</td>
                         <td className="px-5 py-3 text-xs text-muted-foreground">{t.slowestSpan}</td>
                       </tr>
                     ))}
+                    {(!inc?.traces || inc.traces.length === 0) && (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-6 text-center text-xs text-muted-foreground">
+                          No slow traces available for this incident.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </CardContent>
@@ -528,7 +598,17 @@ export default function IncidentDetail() {
                     rows={3}
                   />
                   <div className="flex justify-end">
-                    <Button data-testid="btn-add-note" size="sm" disabled={!note.trim()}>Post Note</Button>
+                    <Button
+                      data-testid="btn-add-note"
+                      size="sm"
+                      disabled={!note.trim() || addNoteMutation.isPending}
+                      onClick={() => {
+                        if (!note.trim()) return;
+                        addNoteMutation.mutate(note.trim());
+                      }}
+                    >
+                      {addNoteMutation.isPending ? "Posting..." : "Post Note"}
+                    </Button>
                   </div>
                 </div>
               </CardContent>

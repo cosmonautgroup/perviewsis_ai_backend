@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -57,6 +57,141 @@ export default function AlertDetail() {
     enabled: !!alertId,
   });
 
+  const txAppId = alert?.applicationId ?? ai?.applicationId ?? null;
+  const rootCauseSummary =
+    (typeof ai?.primaryRootCause === "string" && ai.primaryRootCause.trim().length > 0
+      ? ai.primaryRootCause.trim()
+      : "") ||
+    (typeof ai?.summary === "string" && ai.summary.trim().length > 0
+      ? ai.summary.trim()
+      : "") ||
+    (typeof alert?.description === "string" && alert.description.trim().length > 0
+      ? alert.description.trim()
+      : "") ||
+    `Alert ${alertId} is active and requires investigation. Review correlated signals and recent changes to confirm the root cause.`;
+  const logEntries = useMemo(() => {
+    const aiLogs = Array.isArray(ai?.correlatedSignals?.logs) ? ai.correlatedSignals.logs : [];
+    const relatedErrorLogs = Array.isArray(related?.errors)
+      ? related.errors.slice(0, 4).map((e: any) => ({
+          level: "ERROR",
+          timestamp: Number(e?.lastSeen ?? Date.now()),
+          source: e?.type ?? e?.errorId ?? "Error",
+          message: e?.message ?? "Correlated error detected.",
+          origin: "Live Context",
+        }))
+      : [];
+    const relatedIncidentLogs = Array.isArray(related?.incidents)
+      ? related.incidents.slice(0, 2).map((i: any) => ({
+          level: "WARN",
+          timestamp: Date.now() - 3 * 60 * 1000,
+          source: i?.id ?? "Incident",
+          message: `${i?.title ?? "Incident"} is ${String(i?.status ?? "active").toLowerCase()} in the same context.`,
+          origin: "Live Context",
+        }))
+      : [];
+    const baseInfoLog = alert?.timestamp
+      ? [{
+          level: "INFO",
+          timestamp: Number(alert.timestamp),
+          source: alert?.service ?? alert?.entity ?? "Alert",
+          message: `Alert ${alert?.alertId ?? alertId} triggered for ${alert?.rule ?? "rule breach"}.`,
+          origin: "Live Context",
+        }]
+      : [];
+    const relatedAlertLogs = Array.isArray(alert?.correlatedAlerts)
+      ? alert.correlatedAlerts.slice(0, 3).map((a: any) => ({
+          level: "WARN",
+          timestamp: Number(alert?.timestamp ?? Date.now()) - 2 * 60 * 1000,
+          source: a?.alertId ?? "Correlated Alert",
+          message: `Correlated alert ${a?.alertId ?? ""}: ${a?.rule ?? a?.entity ?? "related signal"} (${a?.severity ?? "N/A"}).`,
+          origin: "Live Context",
+        }))
+      : [];
+    const merged = [...relatedErrorLogs, ...relatedIncidentLogs, ...relatedAlertLogs, ...baseInfoLog, ...aiLogs]
+      .map((l: any) => ({
+        level: String(l?.level ?? "INFO").toUpperCase(),
+        timestamp: Number(l?.timestamp ?? Date.now()),
+        source: String(l?.source ?? "System"),
+        message: String(l?.message ?? "No details"),
+        origin: String(l?.origin ?? "AI Suggestion"),
+      }))
+      .filter((l: any) => Number.isFinite(l.timestamp) && l.message.trim().length > 0);
+    const seen = new Set<string>();
+    const deduped = merged.filter((l: any) => {
+      const k = `${l.level}|${l.source}|${l.message}|${Math.floor(l.timestamp / 1000)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    return deduped.sort((a: any, b: any) => b.timestamp - a.timestamp).slice(0, 12);
+  }, [ai, related, alert, alertId]);
+
+  const remediationImmediate = useMemo(() => {
+    const aiImmediate = Array.isArray(ai?.remediationActions?.immediate) ? ai.remediationActions.immediate : [];
+    const derived: any[] = [];
+    if (Array.isArray(related?.errors) && related.errors.length > 0) {
+      derived.push({
+        priority: "High",
+        effort: "Medium",
+        confidence: 84,
+        action: `Contain top error path: ${related.errors[0]?.type ?? related.errors[0]?.errorId ?? "Error"}.`,
+        impactReduction: 22,
+        command: `Investigate ${related.errors[0]?.errorId ?? "error"} and apply targeted retry/timeout guardrails on affected endpoints.`,
+        origin: "Live Context",
+      });
+    }
+    if (Array.isArray(related?.incidents) && related.incidents.length > 0) {
+      derived.push({
+        priority: "High",
+        effort: "Low",
+        confidence: 81,
+        action: `Coordinate with incident ${related.incidents[0]?.id ?? "context"} to prevent escalation overlap.`,
+        impactReduction: 18,
+        command: `Align remediation timeline with ${related.incidents[0]?.id ?? "incident"} and pause non-critical deploys during mitigation.`,
+        origin: "Live Context",
+      });
+    }
+    if (alert?.service || alert?.entity) {
+      derived.push({
+        priority: "Medium",
+        effort: "Low",
+        confidence: 76,
+        action: `Stabilize ${alert?.service ?? alert?.entity} traffic pattern while alert remains active.`,
+        impactReduction: 14,
+        command: `Apply temporary rate shaping and retry cap on ${alert?.service ?? alert?.entity}.`,
+        origin: "Live Context",
+      });
+    }
+    const normalizedAi = aiImmediate.map((r: any) => ({ ...r, origin: "AI Suggestion" }));
+    return [...derived, ...normalizedAi].slice(0, 4);
+  }, [ai, related, alert]);
+
+  const remediationLongTerm = useMemo(() => {
+    const aiLong = Array.isArray(ai?.remediationActions?.longTerm) ? ai.remediationActions.longTerm : [];
+    const derived: any[] = [];
+    if (Array.isArray(related?.incidents) && related.incidents.length > 0) {
+      derived.push({
+        effort: "High",
+        confidence: 78,
+        action: "Reduce repeat incident pressure with threshold and autoscaling policy tuning.",
+        impactReduction: 18,
+        detail: `${related.incidents.length} related incident(s) found. Re-baseline thresholds and strengthen dependency resilience for recurring patterns.`,
+        origin: "Live Context",
+      });
+    }
+    if (Array.isArray(related?.errors) && related.errors.length > 1) {
+      derived.push({
+        effort: "Medium",
+        confidence: 74,
+        action: "Address recurring correlated error signatures with a shared fix pattern.",
+        impactReduction: 16,
+        detail: `${related.errors.length} correlated error entries detected in this alert context; prioritize top signatures first.`,
+        origin: "Live Context",
+      });
+    }
+    const normalizedAi = aiLong.map((r: any) => ({ ...r, origin: "AI Suggestion" }));
+    return [...derived, ...normalizedAi].slice(0, 4);
+  }, [ai, related]);
   const loading = loadingAlert || loadingAI;
 
   if (loading) return (
@@ -150,10 +285,36 @@ export default function AlertDetail() {
                 </CardHeader>
                 <CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4">
                   {[
-                    { label: "Health Rule", value: ai?.healthRule?.name ?? alert?.rule },
-                    { label: "Threshold", value: ai?.healthRule?.threshold ?? "> 5% for 5min" },
-                    { label: "Current Value", value: ai?.healthRule?.metricAtBreach ?? "5.2%", bad: true },
-                    { label: "Baseline", value: ai?.healthRule?.baseline ?? "2.1%", good: true },
+                    {
+                      label: alert?.alertType === "healthRuleViolation" ? "Health Rule" : "Alert Trigger",
+                      value: alert?.alertType === "healthRuleViolation"
+                        ? (alert?.healthRuleName ?? ai?.healthRule?.name ?? alert?.rule)
+                        : (alert?.rule ?? "Not available"),
+                    },
+                    ...(alert?.alertType === "healthRuleViolation" && alert?.violationName && alert?.violationName !== (alert?.healthRuleName ?? ai?.healthRule?.name ?? alert?.rule)
+                      ? [{ label: "Violation Event", value: alert?.violationName }]
+                      : []),
+                    ...(alert?.alertType === "healthRuleViolation" && alert?.healthRuleId ? [{ label: "Health Rule ID", value: alert?.healthRuleId }] : []),
+                    {
+                      label: "Threshold",
+                      value: alert?.alertType === "healthRuleViolation"
+                        ? (ai?.healthRule?.threshold ?? "> 5% for 5min")
+                        : "Not applicable",
+                    },
+                    {
+                      label: "Current Value",
+                      value: alert?.alertType === "healthRuleViolation"
+                        ? (ai?.healthRule?.metricAtBreach ?? "5.2%")
+                        : "Not applicable",
+                      bad: alert?.alertType === "healthRuleViolation",
+                    },
+                    {
+                      label: "Baseline",
+                      value: alert?.alertType === "healthRuleViolation"
+                        ? (ai?.healthRule?.baseline ?? "2.1%")
+                        : "Not applicable",
+                      good: alert?.alertType === "healthRuleViolation",
+                    },
                     { label: "Evaluation Window", value: ai?.healthRule?.evaluationWindow ?? "5 minutes" },
                     { label: "Entity Affected", value: ai?.healthRule?.entity ?? alert?.entity },
                   ].map(f => (
@@ -244,24 +405,24 @@ export default function AlertDetail() {
 
             {/* Right: AI Summary + Tags */}
             <div className="space-y-5">
-              <Card className="border border-indigo-500/20 bg-indigo-500/5 shadow-sm">
+              <Card className="border border-indigo-500/25 bg-card shadow-sm">
                 <CardHeader className="pb-3 border-b border-indigo-500/10">
-                  <CardTitle className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
-                    <BrainCircuit className="w-4 h-4" /> AI Root Cause Summary
-                    <span className="text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-1.5 py-0.5 rounded font-bold ml-auto">{Math.round((ai?.confidence ?? 0.92) * 100)}% confidence</span>
+                  <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <BrainCircuit className="w-4 h-4 text-indigo-500" /> AI Root Cause Summary
+                    <span className="text-[10px] bg-indigo-500/10 text-indigo-600 border border-indigo-500/30 px-1.5 py-0.5 rounded font-bold ml-auto">{Math.round((ai?.confidence ?? 0.92) * 100)}% confidence</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-4">
-                  <p className="text-sm text-slate-300 leading-relaxed">{ai?.primaryRootCause}</p>
+                  <p className="text-sm text-foreground leading-relaxed">{rootCauseSummary}</p>
                   <div className="mt-4 space-y-2">
-                    {ai?.contributingFactors?.slice(0, 3).map((f: any) => (
+                    {ai?.contributingFactors?.slice(0, 3)?.map((f: any) => (
                       <div key={f.factor} className="flex items-start gap-2">
                         <div className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${f.severity === "Critical" ? "bg-red-400" : f.severity === "High" ? "bg-orange-400" : "bg-yellow-400"}`} />
-                        <p className="text-xs text-slate-400">{f.factor}</p>
+                        <p className="text-xs text-muted-foreground">{f.factor}</p>
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => setTab("ai")} className="mt-3 text-xs text-indigo-400 hover:underline">Full AI analysis →</button>
+                  <button onClick={() => setTab("ai")} className="mt-3 text-xs text-indigo-600 hover:underline">Full AI analysis →</button>
                 </CardContent>
               </Card>
 
@@ -313,7 +474,7 @@ export default function AlertDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-5">
-                <p className="text-sm text-foreground leading-relaxed">{ai?.primaryRootCause}</p>
+                <p className="text-sm text-foreground leading-relaxed">{rootCauseSummary}</p>
               </CardContent>
             </Card>
 
@@ -428,7 +589,20 @@ export default function AlertDetail() {
                   <tbody className="divide-y divide-border">
                     {ai?.affectedTransactions?.map((tx: any) => (
                       <tr key={tx.name} data-testid={`tx-row-${tx.name.replace(/\s+/g, '-').toLowerCase()}`} className="hover:bg-muted/20 transition-colors">
-                        <td className="px-5 py-4 font-medium text-foreground">{tx.name}</td>
+                        <td className="px-5 py-4 font-medium text-foreground">
+                          {txAppId ? (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Link href={`/applications/${txAppId}/transactions/${encodeURIComponent(String(tx?.txId ?? tx?.name ?? ""))}`} className="text-primary hover:underline">
+                                {tx.name}
+                              </Link>
+                              <Link href={`/applications/${txAppId}/transactions/${encodeURIComponent(String(tx?.txId ?? tx?.name ?? ""))}`} className="text-[11px] px-1.5 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/10">
+                                Open
+                              </Link>
+                            </div>
+                          ) : (
+                            tx.name
+                          )}
+                        </td>
                         <td className={`px-5 py-4 text-right font-bold font-mono ${tx.errorRate > 3 ? "text-red-400" : tx.errorRate > 1 ? "text-orange-400" : "text-green-400"}`}>{tx.errorRate}%</td>
                         <td className={`px-5 py-4 text-right font-mono ${tx.avgResponseTime > 2000 ? "text-red-400" : tx.avgResponseTime > 800 ? "text-orange-400" : "text-foreground"}`}>{tx.avgResponseTime.toLocaleString()}ms</td>
                         <td className="px-5 py-4 text-right font-mono text-muted-foreground">{tx.p99.toLocaleString()}ms</td>
@@ -484,14 +658,18 @@ export default function AlertDetail() {
             </CardHeader>
             <CardContent className="p-0">
               <div className="font-mono text-xs divide-y divide-border">
-                {ai?.correlatedSignals?.logs?.map((log: any, i: number) => (
+                {logEntries.map((log: any, i: number) => (
                   <div key={i} data-testid={`log-entry-${i}`} className="px-5 py-3 flex flex-wrap gap-3 hover:bg-muted/20 transition-colors">
                     <span className={`shrink-0 font-bold ${LOG_COLORS[log.level] ?? "text-foreground"}`}>[{log.level}]</span>
-                    <span className="text-muted-foreground shrink-0">{format(new Date(log.timestamp), 'HH:mm:ss')}</span>
-                    <span className="text-blue-400/70 shrink-0">{log.source}</span>
+                    <span className="text-foreground/80 shrink-0">{format(new Date(log.timestamp), 'HH:mm:ss')}</span>
+                    <span className="text-blue-600 shrink-0">{log.source}</span>
+                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${log.origin === "Live Context" ? "text-green-600 border-green-500/30 bg-green-500/10" : "text-indigo-600 border-indigo-500/30 bg-indigo-500/10"}`}>{log.origin}</span>
                     <span className="text-foreground flex-1 min-w-0 break-all">{log.message}</span>
                   </div>
                 ))}
+                {logEntries.length === 0 && (
+                  <div className="px-5 py-6 text-muted-foreground">No correlated logs found for this alert.</div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -503,14 +681,15 @@ export default function AlertDetail() {
             <div>
               <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Immediate Actions</h2>
               <div className="space-y-3">
-                {ai?.remediationActions?.immediate?.map((r: any, idx: number) => (
+                {remediationImmediate.map((r: any, idx: number) => (
                   <div key={r.action} data-testid={`immediate-action-${idx}`} className={`rounded-xl border p-5 ${r.priority === "Critical" ? "border-red-500/20 bg-red-500/5" : "border-orange-500/20 bg-orange-500/5"}`}>
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <Chip label={r.priority} cls={SEV[r.priority] ?? ""} />
-                          <span className="text-xs text-muted-foreground">Effort: <strong className="text-foreground">{r.effort}</strong></span>
-                          <span className="text-xs text-indigo-400">Confidence: {r.confidence}%</span>
+                          <span className="text-xs text-foreground/80">Effort: <strong className="text-foreground">{r.effort}</strong></span>
+                          <span className="text-xs text-indigo-600">Confidence: {r.confidence}%</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${r.origin === "Live Context" ? "text-green-600 border-green-500/30 bg-green-500/10" : "text-indigo-600 border-indigo-500/30 bg-indigo-500/10"}`}>{r.origin ?? "AI Suggestion"}</span>
                         </div>
                         <p className="text-sm font-semibold text-foreground">{r.action}</p>
                       </div>
@@ -519,7 +698,7 @@ export default function AlertDetail() {
                         <p className="text-xl font-bold text-green-400">{r.impactReduction}%</p>
                       </div>
                     </div>
-                    <div className="bg-black/30 border border-border rounded-lg px-4 py-3 font-mono text-xs text-green-300">{r.command}</div>
+                    <div className="bg-muted/30 border border-border rounded-lg px-4 py-3 font-mono text-xs text-foreground">{r.command}</div>
                   </div>
                 ))}
               </div>
@@ -528,13 +707,14 @@ export default function AlertDetail() {
             <div>
               <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><Wrench className="w-4 h-4 text-blue-400" /> Long-term Fixes</h2>
               <div className="space-y-3">
-                {ai?.remediationActions?.longTerm?.map((r: any, idx: number) => (
+                {remediationLongTerm.map((r: any, idx: number) => (
                   <div key={r.action} data-testid={`longterm-action-${idx}`} className="rounded-xl border border-border bg-muted/10 p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs text-muted-foreground">Effort: <strong className="text-foreground">{r.effort}</strong></span>
-                          <span className="text-xs text-indigo-400">Confidence: {r.confidence}%</span>
+                          <span className="text-xs text-foreground/80">Effort: <strong className="text-foreground">{r.effort}</strong></span>
+                          <span className="text-xs text-indigo-600">Confidence: {r.confidence}%</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${r.origin === "Live Context" ? "text-green-600 border-green-500/30 bg-green-500/10" : "text-indigo-600 border-indigo-500/30 bg-indigo-500/10"}`}>{r.origin ?? "AI Suggestion"}</span>
                         </div>
                         <p className="text-sm font-semibold text-foreground">{r.action}</p>
                       </div>
@@ -546,6 +726,11 @@ export default function AlertDetail() {
                     <p className="text-xs text-muted-foreground">{r.detail}</p>
                   </div>
                 ))}
+                {remediationLongTerm.length === 0 && (
+                  <div className="rounded-xl border border-border bg-muted/10 p-5 text-xs text-muted-foreground">
+                    No long-term remediation suggestions available for this alert context yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>

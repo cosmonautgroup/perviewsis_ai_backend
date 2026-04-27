@@ -29,7 +29,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 function ForecastChart({ historical, forecast, threshold, color, label, unit = "%" }: any) {
   const combined = [
     ...(historical ?? []).slice(-24).map((d: any) => ({ ts: d.ts, value: d.value, predicted: null, upper: null, lower: null })),
-    ...(forecast ?? []).slice(0, 48).map((d: any) => ({ ts: d.ts, value: null, predicted: d.predicted, upper: d.upper, lower: d.lower })),
+    ...(forecast ?? []).map((d: any) => ({ ts: d.ts, value: null, predicted: d.predicted, upper: d.upper, lower: d.lower })),
   ];
   return (
     <Card className="border border-border shadow-sm">
@@ -71,8 +71,8 @@ export default function ApplicationCapacity() {
   const [horizon, setHorizon] = useState<Horizon>("72h");
 
   const { data, isLoading } = useQuery<any>({
-    queryKey: [`/api/capacity-planning/applications/${appId}`],
-    queryFn: () => fetch(`/api/capacity-planning/applications/${appId}`).then(r => r.json()),
+    queryKey: [`/api/capacity-planning/applications/${appId}`, horizon],
+    queryFn: () => fetch(`/api/capacity-planning/applications/${appId}?horizon=${encodeURIComponent(horizon)}`).then(r => r.json()),
     enabled: !!appId,
   });
 
@@ -86,6 +86,10 @@ export default function ApplicationCapacity() {
 
   const cur = data?.current ?? {};
   const forecasts = data?.forecasts ?? {};
+  const selectedGlobalAppId = Number(app?.id ?? appId);
+  const globalCapacityHref = Number.isFinite(selectedGlobalAppId)
+    ? `/capacity-planning?appId=${encodeURIComponent(String(selectedGlobalAppId))}`
+    : "/capacity-planning";
 
   return (
     <AppLayout appId={appId}>
@@ -327,7 +331,7 @@ export default function ApplicationCapacity() {
                   { label: "Active Alerts", href: "/alerts", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
                   { label: "Active Incidents", href: `/applications/${appId}/incidents`, icon: <ShieldAlert className="w-3.5 h-3.5" /> },
                   { label: "Cluster k8s-prod", href: "/capacity-planning/cluster/k8s-prod", icon: <Activity className="w-3.5 h-3.5" /> },
-                  { label: "Global Capacity", href: "/capacity-planning", icon: <TrendingUp className="w-3.5 h-3.5" /> },
+                  { label: "Global Capacity", href: globalCapacityHref, icon: <TrendingUp className="w-3.5 h-3.5" /> },
                 ].map(lk => (
                   <Link key={lk.label} href={lk.href}
                     className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 rounded-lg px-3 py-2 transition-colors">

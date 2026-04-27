@@ -20,6 +20,7 @@ export default function ApplicationForecast() {
   
   const { data: app } = useApplication(appId);
   const { data: forecast, isLoading } = useForecast(appId);
+  const hasForecast = Array.isArray(forecast) && forecast.length > 0;
 
   return (
     <AppLayout appId={appId}>
@@ -48,7 +49,7 @@ export default function ApplicationForecast() {
             <CardDescription>Expected P95 latency over next 7 days</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
-            {!isLoading && forecast ? (
+            {!isLoading && hasForecast ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={forecast} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
@@ -59,7 +60,11 @@ export default function ApplicationForecast() {
                   <Line type="monotone" dataKey="predictedResponseTime" name="Predicted Latency (ms)" stroke="hsl(var(--primary))" strokeWidth={3} strokeDasharray="5 5" dot={true} />
                 </LineChart>
               </ResponsiveContainer>
-            ) : null}
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                {isLoading ? "Loading forecast..." : "No forecast data available yet."}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -69,7 +74,7 @@ export default function ApplicationForecast() {
             <CardDescription>Expected infrastructure load over next 7 days</CardDescription>
           </CardHeader>
           <CardContent className="h-[350px]">
-             {!isLoading && forecast ? (
+             {!isLoading && hasForecast ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={forecast} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
@@ -80,7 +85,11 @@ export default function ApplicationForecast() {
                   <Line type="monotone" dataKey="predictedCpu" name="Predicted CPU %" stroke="hsl(var(--status-warning))" strokeWidth={3} strokeDasharray="5 5" dot={true} />
                 </LineChart>
               </ResponsiveContainer>
-            ) : null}
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                {isLoading ? "Loading forecast..." : "No forecast data available yet."}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

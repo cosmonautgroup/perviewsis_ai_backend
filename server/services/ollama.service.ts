@@ -67,7 +67,7 @@ export const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
 
 export function systemPrompt(): string {
   return (
-    "You are Perviewsis AI, an expert observability intelligence engine specialising in " +
+    "You are ObservaIQ AI, an expert observability intelligence engine specialising in " +
     "enterprise APM data from AppDynamics and Dynatrace. " +
     "Always respond with valid JSON only — no markdown, no code blocks, no commentary outside the JSON object. " +
     "Follow the exact JSON schema requested. Do not expose credentials or PII in your response."

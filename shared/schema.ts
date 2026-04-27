@@ -69,6 +69,33 @@ export const invitations = pgTable("invitations", {
 
 export type Invitation = typeof invitations.$inferSelect;
 
+export const emailVerifications = pgTable("email_verifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  email: text("email").notNull(),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  verifiedAt: timestamp("verified_at"),
+  createdAt: timestamp("created_at").default(sql`now()`),
+});
+
+export type EmailVerification = typeof emailVerifications.$inferSelect;
+
+export const incidentNotes = pgTable("incident_notes", {
+  id: serial("id").primaryKey(),
+  incidentId: text("incident_id").notNull(),
+  organizationId: integer("organization_id"),
+  userId: integer("user_id"),
+  author: text("author").notNull(),
+  role: text("role").notNull().default("Operator"),
+  avatar: text("avatar").notNull().default("OP"),
+  content: text("content").notNull(),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").default(sql`now()`),
+});
+
+export type IncidentNote = typeof incidentNotes.$inferSelect;
+
 // ─────────────────────────────────────────────
 // ZOD SCHEMAS (frontend / API validation)
 // ─────────────────────────────────────────────

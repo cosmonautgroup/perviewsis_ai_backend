@@ -58,6 +58,7 @@ export default function AcceptInvite() {
         email: invite?.email,
         password: form.password,
         organizationName: `${form.name}'s Workspace`,
+        inviteToken: token,
       });
       if (!signupRes.ok) {
         const body = await signupRes.json();
@@ -93,7 +94,8 @@ export default function AcceptInvite() {
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6">
         <div className="flex flex-col items-center gap-3">
-          <img src="/logo.png" alt="Perviewsis" className="h-12 w-auto" />
+          {/*<img src="/logo.png" alt="ObservaIQ" className="h-12 w-auto" />*/}
+          <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-foreground">ObservaIQ</span></div>
         </div>
 
         <Card className="border border-border shadow-sm">
@@ -151,3 +153,4 @@ export default function AcceptInvite() {
     </div>
   );
 }
+

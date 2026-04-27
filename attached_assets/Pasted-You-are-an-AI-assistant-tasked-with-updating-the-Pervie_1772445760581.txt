@@ -1,4 +1,4 @@
-You are an AI assistant tasked with updating the Perviewsis platform code in this Replit project. The goal is to:
+You are an AI assistant tasked with updating the ObservaIQ platform code in this Replit project. The goal is to:
 
 1) **Remove all test/sample users and sample telemetry data** from the system.
    - Delete any seeds, fixtures, mocks, scripts, and hard-coded test data.

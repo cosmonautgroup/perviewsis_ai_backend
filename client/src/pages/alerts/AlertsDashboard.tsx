@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Bell, AlertTriangle, BrainCircuit, Search,
   ChevronRight, CalendarDays
@@ -58,54 +59,64 @@ function getDateCutoffs(preset: DatePreset, customFrom: string, customTo: string
 }
 
 export default function AlertsDashboard() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialAppId = urlParams.get("appId") ?? "";
+  const initialAppName = urlParams.get("appName") ?? "";
+  const sourceIncidentId = urlParams.get("incidentId") ?? "";
   const [search, setSearch] = useState("");
-  const [appFilter, setAppFilter] = useState("All");
+  const [appFilter, setAppFilter] = useState(initialAppId || initialAppName || "All");
   const [sevFilter, setSevFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [selectedAlert, setSelectedAlert] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DatePreset>("All");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const { data: incidentDetail } = useQuery<any>({
+    queryKey: ["/api/incidents/detail-drilldown", sourceIncidentId],
+    queryFn: () => fetch(`/api/incidents/${sourceIncidentId}`).then((r) => r.json()),
+    enabled: !!sourceIncidentId,
+    staleTime: 30000,
+  });
+  const effectiveAppId = String(initialAppId || incidentDetail?.applicationId || "").trim();
 
   const { data: alerts, isLoading } = useQuery<any[]>({
-    queryKey: ["/api/alerts"],
+    queryKey: ["/api/alerts", effectiveAppId],
     queryFn: async () => {
-      const res = await fetch("/api/alerts");
-      if (!res.ok) throw new Error("Failed to load alerts");
-      const rows = await res.json();
-      const sevNorm = (sev: string) => {
-        const s = String(sev ?? "").toLowerCase();
-        if (s.includes("critical")) return "Critical";
-        if (s.includes("high") || s.includes("error")) return "High";
-        if (s.includes("warn") || s.includes("medium")) return "Medium";
-        return "Low";
-      };
-      const statusNorm = (st: string) => {
-        const s = String(st ?? "").toLowerCase();
-        if (s.includes("resolve")) return "Resolved";
-        if (s.includes("ack")) return "Acknowledged";
-        return "Active";
-      };
-      return (rows ?? []).map((a: any) => ({
-        ...a,
-        severity: sevNorm(a.severity),
-        status: statusNorm(a.status),
-        timestamp: Number(a.timestamp ?? a.triggeredAt ?? a.startTime ?? Date.now()),
-        aiRiskScore: Number(a.aiRiskScore ?? 0),
-        occurrences: Number(a.occurrences ?? 1),
-      }));
+      const params = new URLSearchParams();
+      if (effectiveAppId) params.set("appId", effectiveAppId);
+      const url = params.toString() ? `/api/alerts?${params.toString()}` : "/api/alerts";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch alerts");
+      return await res.json();
     },
+    refetchOnMount: "always",
+    staleTime: 0,
   });
+  // Single source of truth for all contexts: app-scoped /api/alerts rows.
+  // This keeps incident-opened Alerts identical to app/global alerts behavior.
+  const baseAlerts = alerts ?? [];
 
   const { from: dateCutoffFrom, to: dateCutoffTo } = getDateCutoffs(dateRange, customFrom, customTo);
 
-  const appNames = ["All", ...Array.from(new Set((alerts ?? []).map(a => a.applicationName).filter(Boolean)))];
+  const appOptions = [
+    { value: "All", label: "All" },
+    ...Array.from(
+      new Map(
+        baseAlerts
+          .filter((a) => a?.applicationName || a?.applicationId)
+          .map((a) => [String(a.applicationId ?? a.applicationName), { value: String(a.applicationId ?? a.applicationName), label: a.applicationName ?? String(a.applicationId) }]),
+      ).values(),
+    ),
+  ];
+  const scopedAlerts = baseAlerts.filter((a) => {
+    if (appFilter === "All") return true;
+    return String(a.applicationId ?? "") === String(appFilter) || String(a.applicationName ?? "") === String(appFilter);
+  });
 
-  const filtered = (alerts ?? []).filter(a => {
+  const filtered = scopedAlerts.filter(a => {
     const ts: number = a.timestamp;
     if (dateCutoffFrom !== null && ts < dateCutoffFrom) return false;
     if (dateCutoffTo !== null && ts > dateCutoffTo) return false;
-    if (appFilter !== "All" && a.applicationName !== appFilter) return false;
     if (sevFilter !== "All" && a.severity !== sevFilter) return false;
     if (statusFilter !== "All" && a.status !== statusFilter) return false;
     if (search !== "" &&
@@ -116,18 +127,20 @@ export default function AlertsDashboard() {
   });
 
   const counts = {
-    Critical: alerts?.filter(a => a.severity === "Critical").length ?? 0,
-    High: alerts?.filter(a => a.severity === "High").length ?? 0,
-    Medium: alerts?.filter(a => a.severity === "Medium").length ?? 0,
-    Low: alerts?.filter(a => a.severity === "Low").length ?? 0,
-    Active: alerts?.filter(a => a.status === "Active").length ?? 0,
+    Critical: scopedAlerts.filter(a => a.severity === "Critical").length,
+    High: scopedAlerts.filter(a => a.severity === "High").length,
+    Medium: scopedAlerts.filter(a => a.severity === "Medium").length,
+    Low: scopedAlerts.filter(a => a.severity === "Low").length,
+    Active: scopedAlerts.filter(a => a.status === "Active").length,
   };
 
-  const appCounts = appNames.slice(1).map(name => ({ name, count: (alerts ?? []).filter(a => a.applicationName === name).length }));
+  const appCounts = appOptions
+    .filter((o) => o.value !== "All")
+    .map((o) => ({ name: o.label, count: (scopedAlerts ?? []).filter((a) => String(a.applicationId ?? a.applicationName) === o.value).length }));
 
   const trendData = Array.from({ length: 24 }).map((_, i) => {
     const h = 23 - i;
-    const bucket = (alerts ?? []).filter(a => {
+    const bucket = scopedAlerts.filter(a => {
       const age = Date.now() - a.timestamp;
       return age >= h * 3600000 && age < (h + 1) * 3600000;
     }).length;
@@ -135,10 +148,9 @@ export default function AlertsDashboard() {
   }).reverse();
 
   const ruleFrequency = Object.entries(
-    (alerts ?? []).reduce((acc: any, a) => { acc[a.rule] = (acc[a.rule] || 0) + 1; return acc; }, {})
+    scopedAlerts.reduce((acc: any, a) => { acc[a.rule] = (acc[a.rule] || 0) + 1; return acc; }, {})
   ).map(([rule, count]) => ({ rule, count })).sort((a: any, b: any) => b.count - a.count);
 
-  const hasData = (alerts?.length ?? 0) > 0;
   return (
     <AppLayout>
       <div className="space-y-5">
@@ -166,9 +178,9 @@ export default function AlertsDashboard() {
             { label: "High", count: counts.High, cls: "border-orange-500/20 bg-orange-500/5 text-orange-400" },
             { label: "Medium", count: counts.Medium, cls: "border-yellow-500/20 bg-yellow-500/5 text-yellow-400" },
             { label: "Low", count: counts.Low, cls: "border-blue-500/20 bg-blue-500/5 text-blue-400" },
-            { label: "Total Alerts", count: alerts?.length ?? 0, cls: "border-border bg-muted/20 text-foreground" },
+            { label: "Total Alerts", count: scopedAlerts.length, cls: "border-border bg-muted/20 text-foreground" },
           ].map(s => (
-            <div key={s.label} className={`rounded-xl border px-4 py-3 cursor-pointer transition-all ${s.cls}`} onClick={() => setSevFilter(s.label === "Total Alerts" ? "All" : s.label)}>
+            <div key={s.label} className={`rounded-xl border px-3 py-2 cursor-pointer transition-all ${s.cls}`} onClick={() => setSevFilter(s.label === "Total Alerts" ? "All" : s.label)}>
               <p className="text-xs font-medium opacity-70 mb-1">{s.label}</p>
               <p className="text-2xl font-bold">{s.count}</p>
             </div>
@@ -222,8 +234,18 @@ export default function AlertsDashboard() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input data-testid="input-search-alerts" placeholder="Search entity, service, rule..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-xs" />
               </div>
-              <div className="flex gap-1 flex-wrap">
-                {appNames.map(name => <button key={name} data-testid={`filter-app-${name}`} onClick={() => setAppFilter(name)} className={`px-2.5 py-1 rounded text-xs border font-medium transition-colors ${appFilter === name ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>{name}</button>)}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground font-medium">Application:</span>
+                <Select value={appFilter} onValueChange={setAppFilter}>
+                  <SelectTrigger data-testid="select-alert-application" className="h-8 text-xs w-[220px]">
+                    <SelectValue placeholder="All applications" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {appOptions.map((app) => (
+                      <SelectItem key={app.value} value={app.value}>{app.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex gap-1 flex-wrap">
                 {STATUSES.map(s => <button key={s} data-testid={`filter-status-${s}`} onClick={() => setStatusFilter(s)} className={`px-2.5 py-1 rounded text-xs border font-medium transition-colors ${statusFilter === s ? "bg-primary/10 border-primary/30 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>{s}</button>)}
@@ -238,7 +260,7 @@ export default function AlertsDashboard() {
               <CardHeader className="pb-2 pt-4 px-4">
                 <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Alert Volume — Last 24h</CardTitle>
               </CardHeader>
-              <CardContent className="px-3 pb-4 h-[100px]">
+              <CardContent className="px-3 pb-3 h-[72px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={trendData} margin={{ top: 0, right: 0, left: -30, bottom: 0 }}>
                     <XAxis dataKey="hour" fontSize={9} stroke="hsl(var(--muted-foreground))" tickLine={false} axisLine={false} interval={5} />
@@ -262,19 +284,19 @@ export default function AlertsDashboard() {
                 {isLoading ? (
                   <div className="p-4 space-y-3">{Array(5).fill(0).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/40 text-muted-foreground text-xs border-b border-border">
+                  <div className="max-h-[58vh] overflow-auto">
+                    <table className="w-full table-fixed text-xs">
+                      <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur text-muted-foreground text-[11px] border-b border-border">
                         <tr>
-                          <th className="px-4 py-3 text-left">Alert ID</th>
-                          <th className="px-4 py-3 text-left">Application</th>
-                          <th className="px-4 py-3 text-left">Severity</th>
-                          <th className="px-4 py-3 text-left">Entity / Rule</th>
-                          <th className="px-4 py-3 text-right">Occurrences</th>
-                          <th className="px-4 py-3 text-left">Time</th>
-                          <th className="px-4 py-3 text-left">Status</th>
-                          <th className="px-4 py-3 text-right">AI Risk</th>
-                          <th className="px-4 py-3"></th>
+                          <th className="px-3 py-2 text-left">Alert ID</th>
+                          <th className="px-3 py-2 text-left">Application</th>
+                          <th className="px-3 py-2 text-left">Severity</th>
+                          <th className="px-3 py-2 text-left">Entity / Rule</th>
+                          <th className="px-3 py-2 text-right">Occurrences</th>
+                          <th className="px-3 py-2 text-left">Time</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                          <th className="px-3 py-2 text-right">AI Risk</th>
+                          <th className="px-3 py-2"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
@@ -285,22 +307,22 @@ export default function AlertsDashboard() {
                             className={`hover:bg-muted/20 cursor-pointer transition-colors ${selectedAlert === a.alertId ? "bg-primary/5 border-l-2 border-primary" : ""}`}
                             onClick={() => setSelectedAlert(prev => prev === a.alertId ? null : a.alertId)}
                           >
-                            <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.alertId}</td>
-                            <td className="px-4 py-3 text-xs text-foreground max-w-[130px] truncate">{a.applicationName ?? "—"}</td>
-                            <td className="px-4 py-3"><Chip label={a.severity} cls={SEV_CLASSES[a.severity] ?? ""} /></td>
-                            <td className="px-4 py-3">
+                            <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{a.alertId}</td>
+                            <td className="px-3 py-2 text-xs text-foreground max-w-[130px] truncate">{a.applicationName ?? "—"}</td>
+                            <td className="px-3 py-2"><Chip label={a.severity} cls={SEV_CLASSES[a.severity] ?? ""} /></td>
+                            <td className="px-3 py-2">
                               <p className="font-medium text-foreground text-xs">{a.entity}</p>
                               <p className="text-[10px] text-muted-foreground truncate max-w-[200px]">{a.rule}</p>
                             </td>
-                            <td className="px-4 py-3 text-right">
+                            <td className="px-3 py-2 text-right">
                               <span className={`text-xs font-bold font-mono ${(a.occurrences ?? 1) > 3 ? "text-orange-400" : "text-foreground"}`}>{(a.occurrences ?? 1).toLocaleString()}×</span>
                             </td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                               {a.timestamp ? formatDistanceToNow(new Date(a.timestamp), { addSuffix: true }) : "—"}
                             </td>
-                            <td className="px-4 py-3"><Chip label={a.status} cls={STATUS_CLASSES[a.status] ?? ""} /></td>
-                            <td className="px-4 py-3 text-right"><RiskGauge score={a.aiRiskScore} /></td>
-                            <td className="px-4 py-3 text-right">
+                            <td className="px-3 py-2"><Chip label={a.status} cls={STATUS_CLASSES[a.status] ?? ""} /></td>
+                            <td className="px-3 py-2 text-right"><RiskGauge score={a.aiRiskScore} /></td>
+                            <td className="px-3 py-2 text-right">
                               <Link href={`/alerts/${a.alertId}`} onClick={e => e.stopPropagation()}>
                                 <span className="text-xs text-primary hover:underline flex items-center gap-0.5 justify-end">Detail <ChevronRight className="w-3 h-3" /></span>
                               </Link>
@@ -360,25 +382,14 @@ export default function AlertsDashboard() {
             </Card>
 
             <Card className="border border-indigo-500/20 bg-indigo-500/5 shadow-sm">
-              <CardContent className="px-4 py-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <BrainCircuit className="w-4 h-4 text-indigo-400" />
-                  <p className="text-xs font-semibold text-indigo-300">Live Alert Insights</p>
-                </div>
-                <p className="text-xs text-muted-foreground mb-1">Total alerts: <span className="text-foreground font-semibold">{alerts?.length ?? 0}</span></p>
-                <p className="text-xs text-muted-foreground mb-1">Active: <span className="text-foreground font-semibold">{counts.Active}</span></p>
-                <p className="text-xs text-muted-foreground">Top rule: <span className="text-foreground font-semibold">{ruleFrequency[0]?.rule ?? "N/A"}</span></p>
+              <CardContent className="px-4 py-6 text-center">
+                <BrainCircuit className="w-6 h-6 text-indigo-400 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-indigo-300 mb-1">AI Analysis Available</p>
+                <p className="text-[11px] text-muted-foreground">Connect an APM controller and sync data to see AI-generated forecast risks and recommended actions.</p>
               </CardContent>
             </Card>
           </div>
         </div>
-        {!isLoading && !hasData && (
-          <Card className="border border-border shadow-sm">
-            <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No alerts found for your active organization/integrations.
-            </CardContent>
-          </Card>
-        )}
       </div>
     </AppLayout>
   );
@@ -404,7 +415,7 @@ function CorrelatedErrorsPanel({ alertId }: { alertId: string }) {
         ) : (
           <div className="divide-y divide-border">
             {errors.map(e => (
-              <div key={e.errorId} className="px-4 py-3 flex flex-wrap items-start justify-between gap-2">
+              <div key={e.errorId} className="px-3 py-2 flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="text-xs font-mono font-medium text-foreground">{e.type}</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">{e.message.slice(0, 80)}…</p>
@@ -422,3 +433,4 @@ function CorrelatedErrorsPanel({ alertId }: { alertId: string }) {
     </Card>
   );
 }
+

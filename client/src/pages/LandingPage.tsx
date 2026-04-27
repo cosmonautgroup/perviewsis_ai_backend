@@ -44,7 +44,8 @@ export default function LandingPage() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-indigo-500/3 blur-[150px] pointer-events-none" />
 
         <div className="relative z-10 flex items-center gap-3">
-          <img src="/logo.png" alt="Perviewsis" className="h-9 w-auto" />
+          {/*<img src="/logo.png" alt="ObservaIQ" className="h-9 w-auto" />*/}
+          <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-primary-foreground">ObservaIQ</span></div>
           <span className="text-[10px] px-2 py-0.5 rounded-full border border-indigo-500/30 text-indigo-400 font-medium">Enterprise</span>
         </div>
 
@@ -90,10 +91,10 @@ export default function LandingPage() {
             <Database className="w-3.5 h-3.5" />
             <span>Integrates with AppDynamics · Dynatrace · New Relic · OpenTelemetry</span>
           </div>
-          <a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer"
+          {/*<a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer"
             className="text-[11px] text-slate-600 hover:text-slate-400 transition-colors">
             Developed by Cosmonaut Technologies
-          </a>
+          </a>*/}
         </div>
       </div>
 
@@ -102,11 +103,12 @@ export default function LandingPage() {
         <div className="w-full max-w-sm space-y-6">
 
           <div className="flex md:hidden items-center gap-2 mb-2">
-            <img src="/logo.png" alt="Perviewsis" className="h-8 w-auto" />
+            {/*<img src="/logo.png" alt="ObservaIQ" className="h-8 w-auto" />*/}
+            <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-primary-foreground">ObservaIQ</span></div>
           </div>
 
           <div className="space-y-1">
-            <h2 className="text-xl font-bold text-white">Welcome to Perviewsis</h2>
+            <h2 className="text-xl font-bold text-white">Welcome to ObservaIQ</h2>
             <p className="text-sm text-slate-400">
               Enterprise APM Intelligence — connect AppDynamics or Dynatrace and start monitoring your stack in real time.
             </p>
@@ -162,3 +164,4 @@ export default function LandingPage() {
     </div>
   );
 }
+

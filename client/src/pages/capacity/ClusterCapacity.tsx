@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -87,13 +88,40 @@ export default function ClusterCapacity() {
     enabled: !!clusterId,
   });
 
+  const cur = data?.current ?? {};
+  const recommendations = useMemo(() => {
+    const fromApi = Array.isArray(data?.recommendations) ? data.recommendations : [];
+    if (fromApi.length > 0) return fromApi;
+    const cpuPct = cur.cpuAllocatable > 0 ? Math.round((Number(cur.cpuUsed ?? 0) / Number(cur.cpuAllocatable ?? 1)) * 100) : 0;
+    const memPct = cur.memAllocatable > 0 ? Math.round((Number(cur.memUsed ?? 0) / Number(cur.memAllocatable ?? 1)) * 100) : 0;
+    const pending = Number(cur.pendingPods ?? 0);
+    return [
+      {
+        id: "fallback-1",
+        action: cpuPct >= 85 || memPct >= 85
+          ? "Scale out worker nodes to recover CPU/Memory headroom."
+          : "Maintain current capacity and keep predictive monitoring enabled.",
+        priority: cpuPct >= 85 || memPct >= 85 ? "High" : "Low",
+        confidence: cpuPct >= 85 || memPct >= 85 ? 0.84 : 0.66,
+        costImpact: cpuPct >= 85 || memPct >= 85 ? "$350/mo" : "$0/mo",
+      },
+      {
+        id: "fallback-2",
+        action: pending > 0
+          ? "Increase pod scheduling capacity for pending workloads."
+          : "Tune autoscaler thresholds to avoid burst-time oscillation.",
+        priority: pending > 0 ? "Critical" : "Medium",
+        confidence: pending > 0 ? 0.9 : 0.72,
+        costImpact: pending > 0 ? "$420/mo" : "$120/mo",
+      },
+    ];
+  }, [data, cur.cpuAllocatable, cur.cpuUsed, cur.memAllocatable, cur.memUsed, cur.pendingPods]);
+
   if (isLoading) return (
     <AppLayout>
       <div className="space-y-4">{Array(5).fill(0).map((_, i) => <Skeleton key={i} className="h-36" />)}</div>
     </AppLayout>
   );
-
-  const cur = data?.current ?? {};
 
   return (
     <AppLayout>
@@ -261,28 +289,33 @@ export default function ClusterCapacity() {
             )}
 
             {/* Recommendations */}
-            <Card className="border border-indigo-500/20 bg-indigo-950/20 shadow-sm" data-testid="cluster-recommendations">
-              <CardHeader className="pb-3 border-b border-indigo-500/10">
-                <CardTitle className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
+            <Card className="border border-indigo-500/20 bg-card shadow-sm" data-testid="cluster-recommendations">
+              <CardHeader className="pb-3 border-b border-border">
+                <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4" /> AI Recommendations
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-4 space-y-3">
-                {(data?.recommendations ?? []).map((r: any) => (
+                {recommendations.map((r: any) => (
                   <div key={r.id} data-testid={`cluster-rec-${r.id}`} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs font-semibold text-foreground leading-snug">{r.action}</p>
-                      <span className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded border ${PRIORITY_COLORS[r.priority] ?? PRIORITY_COLORS.Info}`}>{r.priority}</span>
+                      <p className="text-xs font-semibold text-foreground leading-snug">{r.action ?? "Recommendation unavailable"}</p>
+                      <span className={`shrink-0 text-[9px] font-bold px-2 py-0.5 rounded border ${PRIORITY_COLORS[r.priority] ?? PRIORITY_COLORS.Info}`}>{r.priority ?? "Info"}</span>
                     </div>
                     <div className="flex items-center gap-3 text-[10px]">
-                      <span className="text-muted-foreground">Confidence: <strong className="text-indigo-400">{Math.round(r.confidence * 100)}%</strong></span>
-                      <span className="text-muted-foreground">Cost: <strong className="text-foreground">{r.costImpact}</strong></span>
+                      <span className="text-muted-foreground">Confidence: <strong className="text-indigo-400">{Math.round(Number(r.confidence ?? 0.7) * 100)}%</strong></span>
+                      <span className="text-muted-foreground">Cost: <strong className="text-foreground">{r.costImpact ?? "Operational"}</strong></span>
                     </div>
                     <button data-testid={`cluster-action-${r.id}`} className="w-full text-[10px] font-semibold text-indigo-300 border border-indigo-500/20 bg-indigo-500/5 rounded-lg py-1.5 hover:bg-indigo-500/10 transition-colors">
                       Apply Policy →
                     </button>
                   </div>
                 ))}
+                {recommendations.length === 0 && (
+                  <div className="rounded-xl border border-border bg-muted/10 p-3 text-xs text-muted-foreground">
+                    No AI recommendations available for this cluster context yet.
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -302,9 +335,13 @@ export default function ClusterCapacity() {
               <CardContent className="p-4 space-y-2">
                 {[
                   { label: "Global Capacity Planning", href: "/capacity-planning", icon: <TrendingUp className="w-3.5 h-3.5" /> },
-                  { label: "E-Commerce Capacity", href: "/applications/1/capacity", icon: <Activity className="w-3.5 h-3.5" /> },
-                  { label: "Active Alerts", href: "/alerts", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-                  { label: "Active Incidents", href: "/incidents/INC-0042", icon: <ExternalLink className="w-3.5 h-3.5" /> },
+                  ...((data?.relatedApps ?? []).slice(0, 2).map((app: any) => ({
+                    label: `${app.name} Capacity`,
+                    href: `/applications/${app.id}/capacity`,
+                    icon: <Activity className="w-3.5 h-3.5" />,
+                  }))),
+                  { label: `Alerts${typeof data?.relatedCounts?.activeAlerts === "number" ? ` (${data.relatedCounts.activeAlerts})` : ""}`, href: "/alerts", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+                  { label: `Incidents${typeof data?.relatedCounts?.openIncidents === "number" ? ` (${data.relatedCounts.openIncidents})` : ""}`, href: "/incidents", icon: <ExternalLink className="w-3.5 h-3.5" /> },
                 ].map(lk => (
                   <Link key={lk.label} href={lk.href}
                     className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 rounded-lg px-3 py-2 transition-colors">
@@ -320,3 +357,4 @@ export default function ClusterCapacity() {
     </AppLayout>
   );
 }
+

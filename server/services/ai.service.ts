@@ -18,48 +18,106 @@ export async function getOrgCredIds(orgId: number): Promise<number[]> {
 async function fetchOrgContext(credIds: number[]) {
   if (!credIds.length) return { incidents: [], alerts: [], errors: [], apps: [], servers: [] };
 
-  const [incidents, alerts, errors, apps, servers] = await Promise.all([
-    db.select({
-      id: dbIncidents.id, title: dbIncidents.title, severity: dbIncidents.severity,
-      status: dbIncidents.status, startTime: dbIncidents.startTime,
-      rootCause: dbIncidents.rootCause, affectedServices: dbIncidents.affectedServices,
-      source: dbIncidents.source,
-    }).from(dbIncidents).where(inArray(dbIncidents.credentialId, credIds))
-      .orderBy(desc(dbIncidents.startTime)).limit(25),
+  const apps = await db.select({
+    id: dbApplications.id, name: dbApplications.name, status: dbApplications.status,
+    source: dbApplications.source, healthRuleViolations: dbApplications.healthRuleViolations,
+    externalId: dbApplications.externalId,
+  }).from(dbApplications).where(inArray(dbApplications.credentialId, credIds))
+    .orderBy(dbApplications.name).limit(20);
 
-    db.select({
-      id: dbAlerts.id, name: dbAlerts.name, severity: dbAlerts.severity,
-      status: dbAlerts.status, metric: dbAlerts.metric,
-      threshold: dbAlerts.threshold, currentValue: dbAlerts.currentValue,
-      triggeredAt: dbAlerts.triggeredAt, applicationId: dbAlerts.applicationId,
-      source: dbAlerts.source,
-    }).from(dbAlerts).where(inArray(dbAlerts.credentialId, credIds))
-      .orderBy(desc(dbAlerts.triggeredAt)).limit(25),
+  const appExternalIds = apps.map((a) => String(a.externalId ?? "")).filter(Boolean);
 
-    db.select({
-      id: dbErrors.id, message: dbErrors.message, errorType: dbErrors.errorType,
-      severity: dbErrors.severity, frequency: dbErrors.frequency,
-      frequencyTrend: dbErrors.frequencyTrend, lastOccurrence: dbErrors.lastOccurrence,
-      applicationName: dbErrors.applicationName, service: dbErrors.service,
-      source: dbErrors.source,
-    }).from(dbErrors).where(inArray(dbErrors.credentialId, credIds))
-      .orderBy(desc(dbErrors.lastOccurrence)).limit(25),
+  const [incidents, alerts, errors, servers] = appExternalIds.length > 0
+    ? await Promise.all([
+        db.select({
+          id: dbIncidents.id, title: dbIncidents.title, severity: dbIncidents.severity,
+          status: dbIncidents.status, startTime: dbIncidents.startTime,
+          rootCause: dbIncidents.rootCause, affectedServices: dbIncidents.affectedServices,
+          source: dbIncidents.source, applicationId: dbIncidents.applicationId,
+        }).from(dbIncidents).where(inArray(dbIncidents.applicationId, appExternalIds))
+          .orderBy(desc(dbIncidents.startTime)).limit(25),
 
-    db.select({
-      id: dbApplications.id, name: dbApplications.name, status: dbApplications.status,
-      source: dbApplications.source, healthRuleViolations: dbApplications.healthRuleViolations,
-    }).from(dbApplications).where(inArray(dbApplications.credentialId, credIds))
-      .orderBy(dbApplications.name).limit(20),
+        db.select({
+          id: dbAlerts.id, name: dbAlerts.name, severity: dbAlerts.severity,
+          status: dbAlerts.status, metric: dbAlerts.metric,
+          threshold: dbAlerts.threshold, currentValue: dbAlerts.currentValue,
+          triggeredAt: dbAlerts.triggeredAt, applicationId: dbAlerts.applicationId,
+          source: dbAlerts.source,
+        }).from(dbAlerts).where(inArray(dbAlerts.applicationId, appExternalIds))
+          .orderBy(desc(dbAlerts.triggeredAt)).limit(25),
 
-    db.select({
-      id: dbServers.id, name: dbServers.name, status: dbServers.status,
-      cpuUsage: dbServers.cpuUsage, memoryUsage: dbServers.memoryUsage,
-      source: dbServers.source,
-    }).from(dbServers).where(inArray(dbServers.credentialId, credIds))
-      .orderBy(dbServers.name).limit(20),
-  ]);
+        db.select({
+          id: dbErrors.id, message: dbErrors.message, errorType: dbErrors.errorType,
+          severity: dbErrors.severity, frequency: dbErrors.frequency,
+          frequencyTrend: dbErrors.frequencyTrend, lastOccurrence: dbErrors.lastOccurrence,
+          applicationName: dbErrors.applicationName, service: dbErrors.service,
+          source: dbErrors.source, applicationId: dbErrors.applicationId,
+        }).from(dbErrors).where(inArray(dbErrors.applicationId, appExternalIds))
+          .orderBy(desc(dbErrors.lastOccurrence)).limit(25),
+
+        db.select({
+          id: dbServers.id, name: dbServers.name, status: dbServers.status,
+          cpuUsage: dbServers.cpuUsage, memoryUsage: dbServers.memoryUsage,
+          source: dbServers.source, applicationId: dbServers.applicationId,
+        }).from(dbServers).where(inArray(dbServers.applicationId, appExternalIds))
+          .orderBy(dbServers.name).limit(20),
+      ])
+    : [[], [], [], []];
 
   return { incidents, alerts, errors, apps, servers };
+}
+
+function buildApplicationPredictions(ctx: any) {
+  const byExternalId = new Map<string, any>();
+  for (const app of ctx.apps ?? []) {
+    const externalId = String(app.externalId ?? "");
+    if (!externalId) continue;
+    byExternalId.set(externalId, {
+      applicationId: app.id,
+      externalId,
+      application: app.name ?? `Application ${app.id}`,
+      source: app.source ?? "unknown",
+      incidents: 0,
+      alerts: 0,
+      errors: 0,
+      servers: 0,
+      riskScore: 0,
+      riskLevel: "Low",
+      trend72h: "Stable",
+    });
+  }
+
+  for (const inc of ctx.incidents ?? []) {
+    const key = String(inc.applicationId ?? "");
+    const row = byExternalId.get(key);
+    if (row) row.incidents += 1;
+  }
+  for (const alert of ctx.alerts ?? []) {
+    const key = String(alert.applicationId ?? "");
+    const row = byExternalId.get(key);
+    if (row) row.alerts += 1;
+  }
+  for (const err of ctx.errors ?? []) {
+    const key = String(err.applicationId ?? "");
+    const row = byExternalId.get(key);
+    if (row) row.errors += Number(err.frequency ?? 1);
+  }
+  for (const srv of ctx.servers ?? []) {
+    const key = String(srv.applicationId ?? "");
+    const row = byExternalId.get(key);
+    if (row) row.servers += 1;
+  }
+
+  const rows = Array.from(byExternalId.values()).map((r) => {
+    const score = Math.min(100, (r.incidents * 20) + (r.alerts * 8) + (r.errors * 2) + (r.servers > 0 ? 5 : 0));
+    const riskLevel = score >= 70 ? "High" : score >= 35 ? "Medium" : "Low";
+    const trend72h = score >= 70 ? "Worsening" : score >= 35 ? "Watch" : "Stable";
+    return { ...r, riskScore: score, riskLevel, trend72h };
+  });
+
+  return rows
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, 12);
 }
 
 // ─── Standard response schema enforced via prompt ────────────────────────────
@@ -75,6 +133,7 @@ const BASE_SCHEMA = `{
 
 export async function runCausalPredictive(credIds: number[]) {
   const ctx = await fetchOrgContext(credIds);
+  const applicationPredictions = buildApplicationPredictions(ctx);
 
   const prompt = `You are an observability AI. Analyse this APM telemetry and identify causal chains between incidents, alerts and errors. Predict potential failures in the next 72 hours.
 
@@ -122,7 +181,87 @@ Respond ONLY with valid JSON matching this schema:
     options: { temperature: 0.2 },
   });
 
-  return parseAIJson(resp.message.content);
+  const parsed = parseAIJson(resp.message.content);
+  return {
+    ...parsed,
+    applicationPredictions: Array.isArray(parsed?.applicationPredictions) && parsed.applicationPredictions.length
+      ? parsed.applicationPredictions
+      : applicationPredictions,
+  };
+}
+
+export async function runCausalPredictiveFallback(credIds: number[]) {
+  const ctx = await fetchOrgContext(credIds);
+  const applicationPredictions = buildApplicationPredictions(ctx);
+  const incidentCount = ctx.incidents.length;
+  const alertCount = ctx.alerts.length;
+  const errorCount = ctx.errors.length;
+  const serverCount = ctx.servers.length;
+  const appCount = ctx.apps.length;
+
+  const topIncident = ctx.incidents[0];
+  const topAlert = ctx.alerts[0];
+  const topError = ctx.errors[0];
+
+  const causalChains = topIncident ? [
+    {
+      id: `fallback-chain-${topIncident.id}`,
+      title: topIncident.title ?? "Primary active incident",
+      confidence: 62,
+      steps: [
+        { time: "T-60m", event: topAlert?.name ?? "Alert threshold breached", value: `${topAlert?.metric ?? "metric"} elevated` },
+        { time: "T-30m", event: topError?.errorType ?? "Error rate increase", value: `${topError?.frequency ?? 0} events` },
+        { time: "T-0m", event: topIncident.title ?? "Incident opened", value: topIncident.severity ?? "Warning" },
+      ],
+      rootCause: topIncident.rootCause ?? "Probable issue chain inferred from alert and error co-occurrence.",
+      recommendation: "Stabilize the impacted service first, then validate dependent services and rollback recent risky changes.",
+    },
+  ] : [];
+
+  const predictions = [
+    {
+      metric: "Incident Load",
+      current: incidentCount,
+      predicted72h: Math.max(incidentCount, Math.round(incidentCount * 1.2)),
+      riskLevel: incidentCount >= 3 ? "High" : incidentCount >= 1 ? "Medium" : "Low",
+      confidence: 55,
+      action: "Prioritize high-severity incidents and suppress noisy alert sources.",
+    },
+    {
+      metric: "Alert Volume",
+      current: alertCount,
+      predicted72h: Math.max(alertCount, Math.round(alertCount * 1.15)),
+      riskLevel: alertCount >= 10 ? "High" : alertCount >= 4 ? "Medium" : "Low",
+      confidence: 58,
+      action: "Tune thresholds for recurring low-value alerts and isolate flapping entities.",
+    },
+    {
+      metric: "Error Rate",
+      current: errorCount,
+      predicted72h: Math.max(errorCount, Math.round(errorCount * 1.1)),
+      riskLevel: errorCount >= 8 ? "High" : errorCount >= 3 ? "Medium" : "Low",
+      confidence: 57,
+      action: "Investigate top recurring exceptions and add guardrails around failure paths.",
+    },
+  ];
+
+  const recommendations = [
+    { action: "Address the top active incident and verify remediation success with live metrics.", impact: "Reduces immediate service risk and user impact.", priority: "high" },
+    { action: "Correlate top alerts with top errors to remove duplicate noise and focus responders.", impact: "Improves triage speed and MTTR.", priority: "medium" },
+    { action: "Review server saturation trends for impacted applications.", impact: "Prevents repeat incidents caused by capacity pressure.", priority: "medium" },
+  ];
+
+  return {
+    summary: `Fallback analysis generated from live telemetry snapshot: ${incidentCount} incidents, ${alertCount} alerts, ${errorCount} errors across ${appCount} applications and ${serverCount} servers.`,
+    confidence: 0.56,
+    causalChains,
+    predictions,
+    applicationPredictions,
+    knowledgeGraph: { nodes: [], edges: [] },
+    recommendations,
+    relatedIssues: [],
+    degraded: true,
+  };
 }
 
 // ─── 2. Root Cause Analysis ───────────────────────────────────────────────────

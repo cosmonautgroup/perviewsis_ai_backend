@@ -3,6 +3,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Link } from "wouter";
 import { TrendingUp, TrendingDown, AlertTriangle, DollarSign, ShoppingCart, Users, Activity } from "lucide-react";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { format } from "date-fns";
@@ -32,8 +33,8 @@ function KPICard({ title, value, unit, trend, icon, isPositiveGood = true }: any
 function RiskCell({ value }: { value: number }) {
   const color = value > 75 ? "bg-red-500" : value > 50 ? "bg-yellow-500" : value > 25 ? "bg-blue-500" : "bg-green-500";
   return (
-    <td className="px-4 py-3">
-      <div className="flex items-center gap-2">
+    <td className="px-4 py-3 text-center align-middle">
+      <div className="flex items-center justify-center">
         <div className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold text-white ${color}`}>{value}</div>
       </div>
     </td>
@@ -143,7 +144,14 @@ export default function BusinessView() {
           <CardContent>
             {isLoading ? <Skeleton className="h-24" /> : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full table-fixed text-sm">
+                  <colgroup>
+                    <col className="w-[35%]" />
+                    <col className="w-[16.25%]" />
+                    <col className="w-[16.25%]" />
+                    <col className="w-[16.25%]" />
+                    <col className="w-[16.25%]" />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
                       <th className="px-4 py-3 text-left font-medium">Tier</th>
@@ -156,7 +164,15 @@ export default function BusinessView() {
                   <tbody className="divide-y divide-border">
                     {data?.riskHeatmap?.map((row: any) => (
                       <tr key={row.tier} className="hover:bg-muted/20">
-                        <td className="px-4 py-3 font-medium text-foreground">{row.tier}</td>
+                        <td className="px-4 py-3 font-medium text-foreground align-middle">
+                          {row?.appId ? (
+                            <Link href={`/applications/${row.appId}/servers`} className="text-primary hover:underline">
+                              {row.tier}
+                            </Link>
+                          ) : (
+                            row.tier
+                          )}
+                        </td>
                         <RiskCell value={row.latency} />
                         <RiskCell value={row.errors} />
                         <RiskCell value={row.cpu} />

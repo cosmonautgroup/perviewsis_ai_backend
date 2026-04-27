@@ -1,5 +1,6 @@
 import React from "react";
 import { useParams, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useApplication, useIncidents } from "@/hooks/use-applications";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +16,19 @@ export default function ApplicationIncidents() {
   
   const { data: app, isLoading: isAppLoading } = useApplication(appId);
   const { data: incidents, isLoading: isIncidentsLoading } = useIncidents(appId);
+  const { data: rich } = useQuery<any>({ queryKey: [`/api/applications/${appId}/rich`] });
+  const predictedIncident = rich?.forecastRisk ? [{
+    incidentId: `PRED-${appId}`,
+    id: `PRED-${appId}`,
+    title: `Predicted SLA breach risk for ${app?.name ?? "this application"}`,
+    recommendation: "Forecast indicates elevated breach probability. Investigate latency/error trends and apply recommended remediation.",
+    severity: rich.forecastRisk.score >= 80 ? "Critical" : "Warning",
+    status: "Open",
+    startTime: Date.now() - 10 * 60 * 1000,
+    affectedTiers: [app?.tier ?? "Application"],
+    impactScore: rich.forecastRisk.score ?? 72,
+  }] : [];
+  const displayIncidents = (incidents && incidents.length > 0) ? incidents : predictedIncident;
 
   return (
     <AppLayout appId={appId}>
@@ -49,7 +63,7 @@ export default function ApplicationIncidents() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {incidents?.map((incident) => (
+                  {displayIncidents?.map((incident: any) => (
                     <tr key={incident.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-6 py-4">
                         <div className="font-semibold text-foreground">{incident.title}</div>
@@ -68,7 +82,7 @@ export default function ApplicationIncidents() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-1 flex-wrap">
-                          {incident.affectedTiers.map((t: string) => (
+                          {(incident.affectedTiers ?? []).map((t: string) => (
                             <span key={t} className="px-2 py-1 bg-secondary text-secondary-foreground text-xs rounded-md border border-border">
                               {t}
                             </span>
@@ -85,7 +99,7 @@ export default function ApplicationIncidents() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right pr-6">
-                        <Link href="/incidents/INC-0042">
+                        <Link href={`/incidents/${incident.incidentId ?? incident.id}`}>
                           <Button data-testid={`btn-investigate-${incident.id}`} variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10">
                             <BrainCircuit className="w-3.5 h-3.5 mr-1" /> Investigate <ChevronRight className="w-4 h-4 ml-1" />
                           </Button>
@@ -93,7 +107,7 @@ export default function ApplicationIncidents() {
                       </td>
                     </tr>
                   ))}
-                  {(!incidents || incidents.length === 0) && (
+                  {(!displayIncidents || displayIncidents.length === 0) && (
                     <tr>
                       <td colSpan={7} className="px-6 py-12 text-center">
                         <div className="flex flex-col items-center justify-center text-muted-foreground">

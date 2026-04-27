@@ -34,14 +34,6 @@ export interface AppDNode {
   ipAddresses?: { ipAddresses?: string[] };
 }
 
-export interface AppDTier {
-  id: number;
-  name: string;
-  description?: string;
-  type?: string;
-  numberOfNodes?: number;
-}
-
 export interface AppDBusinessTransaction {
   id: number;
   name: string;
@@ -79,6 +71,24 @@ export interface AppDMetricData {
   metricName: string;
   metricPath: string;
   metricValues: { startTimeInMillis: number; value: number; count: number }[];
+}
+
+export interface AppDRequestSnapshot {
+  requestGUID?: string;
+  localStartTime?: number;
+  serverStartTime?: number;
+  timeTakenInMilliSecs?: number;
+  URL?: string;
+  summary?: string;
+  errorOccured?: boolean;
+  errorSummary?: string;
+  errorDetails?: any[];
+  stackTraces?: any[];
+  transactionEvents?: any[];
+  httpParameters?: { name?: string; value?: string }[];
+  hasDeepDiveData?: boolean;
+  userExperience?: string;
+  businessTransactionId?: number;
 }
 
 export class AppDynamicsClient {
@@ -137,12 +147,13 @@ export class AppDynamicsClient {
     return this.request<AppDNode[]>(`/applications/${appId}/nodes`);
   }
 
-  async getTiers(appId: number): Promise<AppDTier[]> {
-    return this.request<AppDTier[]>(`/applications/${appId}/tiers`);
-  }
-
-  async getBusinessTransactions(appId: number): Promise<AppDBusinessTransaction[]> {
-    return this.request<AppDBusinessTransaction[]>(`/applications/${appId}/business-transactions`);
+  async getBusinessTransactions(appId: number, durationMins?: number): Promise<AppDBusinessTransaction[]> {
+    const params: Record<string, string> = {};
+    if (durationMins && Number.isFinite(durationMins) && durationMins > 0) {
+      params["time-range-type"] = "BEFORE_NOW";
+      params["duration-in-mins"] = String(durationMins);
+    }
+    return this.request<AppDBusinessTransaction[]>(`/applications/${appId}/business-transactions`, params);
   }
 
   async getProblems(appId: number, durationMins = 1440): Promise<AppDProblem[]> {
@@ -154,33 +165,38 @@ export class AppDynamicsClient {
 
   async getHealthRuleViolations(appId: number, durationMins = 1440): Promise<AppDHealthRuleViolation[]> {
     return this.request<AppDHealthRuleViolation[]>(
-      `/applications/${appId}/healthrule-violations`,
+      `/applications/${appId}/problems/healthrule-violations`,
       { "time-range-type": "BEFORE_NOW", "duration-in-mins": String(durationMins) }
     );
   }
 
-  async getMetricData(appId: number, metricPath: string, durationMins = 60): Promise<AppDMetricData[]> {
+  async getMetrics(appId: number, metricPath: string, durationMins = 60): Promise<AppDMetricData[]> {
     return this.request<AppDMetricData[]>(`/applications/${appId}/metric-data`, {
       "metric-path": metricPath,
       "time-range-type": "BEFORE_NOW",
       "duration-in-mins": String(durationMins),
+      "rollup": "false",
     });
   }
 
-  async getCpuMetrics(appId: number, durationMins = 60): Promise<AppDMetricData[]> {
-    return this.getMetricData(appId, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|CPU|%Busy", durationMins);
+  async getCpuMetrics(appId: number): Promise<AppDMetricData[]> {
+    return this.getMetrics(appId, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|CPU|%Busy");
   }
 
-  async getMemoryMetrics(appId: number, durationMins = 60): Promise<AppDMetricData[]> {
-    return this.getMetricData(appId, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Memory|Used %", durationMins);
+  async getMemoryMetrics(appId: number): Promise<AppDMetricData[]> {
+    return this.getMetrics(appId, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Memory|Used %");
   }
 
   async getResponseTimeMetrics(appId: number, durationMins = 60): Promise<AppDMetricData[]> {
-    return this.getMetricData(appId, "Overall Application Performance|Average Response Time (ms)", durationMins);
+    return this.getMetrics(appId, "Overall Application Performance|Average Response Time (ms)", durationMins);
+  }
+
+  async getCallsPerMinuteMetrics(appId: number, durationMins = 60): Promise<AppDMetricData[]> {
+    return this.getMetrics(appId, "Overall Application Performance|Calls per Minute", durationMins);
   }
 
   async getErrorRateMetrics(appId: number, durationMins = 60): Promise<AppDMetricData[]> {
-    return this.getMetricData(appId, "Overall Application Performance|Errors per Minute", durationMins);
+    return this.getMetrics(appId, "Overall Application Performance|Errors per Minute", durationMins);
   }
 
   async getEvents(appId: number, eventTypes = "APPLICATION_ERROR,DIAGNOSTIC_SESSION", durationMins = 1440): Promise<any[]> {
@@ -189,6 +205,15 @@ export class AppDynamicsClient {
       "duration-in-mins": String(durationMins),
       "event-types": eventTypes,
       "severities": "ERROR,WARN",
+    });
+  }
+
+  async getRequestSnapshots(appId: number, businessTransactionId: number, durationMins = 60): Promise<AppDRequestSnapshot[]> {
+    return this.request<AppDRequestSnapshot[]>(`/applications/${appId}/request-snapshots`, {
+      "time-range-type": "BEFORE_NOW",
+      "duration-in-mins": String(durationMins),
+      "business-transaction-ids": String(businessTransactionId),
+      "need-props": "true",
     });
   }
 }
@@ -203,4 +228,3 @@ export function createAppDynamicsClient(overrides?: Partial<AppDynamicsConfig>):
   if (!controllerUrl || !account || !username || !password) return null;
   return new AppDynamicsClient({ controllerUrl, account, username, password });
 }
-

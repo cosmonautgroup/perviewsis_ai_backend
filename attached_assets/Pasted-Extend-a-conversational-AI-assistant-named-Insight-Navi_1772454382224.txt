@@ -1,4 +1,4 @@
-Extend  a conversational AI assistant named **Insight Navigator AI** for the Perviewsis Observability Platform with the following capabilities:
+Extend  a conversational AI assistant named **Insight Navigator AI** for the ObservaIQ Observability Platform with the following capabilities:
 
 1️⃣ **Auto-Linking Across Dashboards**
 - When the user asks questions about applications, incidents, alerts, errors, or servers, return structured answers that include clickable links to the corresponding dashboards.
@@ -89,4 +89,4 @@ AI JSON Response:
   - Drill down from incidents to alerts/errors to servers
   - View inline metrics and graphs
   - Maintain conversational context across the platform
-- Output structured, actionable, and drillable data ready for frontend rendering in Perviewsis.
+- Output structured, actionable, and drillable data ready for frontend rendering in ObservaIQ.

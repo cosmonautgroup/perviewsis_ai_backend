@@ -84,7 +84,7 @@ export function useIncidents(appId: number) {
       const url = buildUrl(api.applications.incidents.path, { id: appId });
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch incidents");
-      return api.applications.incidents.responses[200].parse(await res.json());
+      return await res.json();
     },
     enabled: !!appId
   });

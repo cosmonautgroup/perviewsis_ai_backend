@@ -66,6 +66,8 @@ const QUICK_PROMPTS = [
   { label: "Root Cause", prompt: "What is the root cause of the checkout failures?" },
 ];
 
+const STREAM_IDLE_TIMEOUT_MS = 120000;
+
 function SeverityBadge({ severity }: { severity: string }) {
   return (
     <Badge className={`text-[10px] border px-1.5 py-0 ${SEV_CLS[severity] ?? "bg-muted text-muted-foreground border-border"}`}>
@@ -368,8 +370,18 @@ export default function InsightNavigator() {
 
     const abort = new AbortController();
     abortRef.current = abort;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let abortedByIdleTimeout = false;
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        abortedByIdleTimeout = true;
+        abort.abort();
+      }, STREAM_IDLE_TIMEOUT_MS);
+    };
 
     try {
+      resetIdleTimer();
       const response = await fetch(`/api/insight-navigator/sessions/${sessionId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -396,10 +408,39 @@ export default function InsightNavigator() {
 
       let accumulated = "";
       let buffer = "";
+      let completed = false;
+      const applySseEvent = (event: any) => {
+        if (event.type === "token") {
+          accumulated += event.text;
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMsgId ? { ...m, content: accumulated } : m,
+          ));
+        } else if (event.type === "done") {
+          const structured: StructuredData = event.data;
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMsgId ? {
+              ...m,
+              content: structured.answerText ?? accumulated,
+              streaming: false,
+              structured,
+            } : m,
+          ));
+          completed = true;
+          qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions"] });
+          qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions", sessionId, "messages"] });
+        } else if (event.type === "error") {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMsgId ? { ...m, content: event.message, streaming: false, structured: null } : m,
+          ));
+          completed = true;
+        }
+      };
 
       while (true) {
+        resetIdleTimer();
         const { done, value } = await reader.read();
         if (done) break;
+        resetIdleTimer();
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
@@ -409,38 +450,38 @@ export default function InsightNavigator() {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6));
-            if (event.type === "token") {
-              accumulated += event.text;
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsgId ? { ...m, content: accumulated } : m,
-              ));
-            } else if (event.type === "done") {
-              const structured: StructuredData = event.data;
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsgId ? {
-                  ...m,
-                  content: structured.answerText ?? accumulated,
-                  streaming: false,
-                  structured,
-                } : m,
-              ));
-              qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions"] });
-              qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions", sessionId, "messages"] });
-            } else if (event.type === "error") {
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsgId ? { ...m, content: event.message, streaming: false, structured: null } : m,
-              ));
-            }
+            applySseEvent(event);
           } catch { /* ignore malformed SSE */ }
         }
       }
+
+      const tail = buffer.trim();
+      if (tail.startsWith("data: ")) {
+        try {
+          const event = JSON.parse(tail.slice(6));
+          applySseEvent(event);
+        } catch { /* ignore malformed tail */ }
+      }
+
+      if (!completed) {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMsgId ? { ...m, content: accumulated || "No response received", streaming: false } : m,
+        ));
+      }
     } catch (err: any) {
-      if (err.name !== "AbortError") {
+      if (err.name === "AbortError" && abortedByIdleTimeout) {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMsgId
+            ? { ...m, content: "AI response timed out. Please verify Ollama is running and the model is available.", streaming: false }
+            : m,
+        ));
+      } else if (err.name !== "AbortError") {
         setMessages(prev => prev.map(m =>
           m.id === assistantMsgId ? { ...m, content: err.message ?? "Connection error", streaming: false } : m,
         ));
       }
     } finally {
+      if (idleTimer) clearTimeout(idleTimer);
       setIsStreaming(false);
       abortRef.current = null;
       inputRef.current?.focus();

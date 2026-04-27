@@ -76,7 +76,7 @@ export default function AiInsights() {
           <Button
             data-testid="button-run-causal-ai"
             onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || health?.ok === false}
             className="bg-indigo-600 hover:bg-indigo-700 text-white"
           >
             {mutation.isPending
@@ -205,6 +205,41 @@ export default function AiInsights() {
                           <span className="text-xs text-muted-foreground">{p.confidence}% confidence</span>
                         </div>
                         <p className="text-xs text-muted-foreground mt-2">{p.action}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Application-wise risk */}
+            {result.applicationPredictions?.length > 0 && (
+              <div>
+                <h2 className="text-base font-semibold text-foreground mb-3">
+                  Application-wise Predictions
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {result.applicationPredictions.map((app: any, i: number) => (
+                    <Card key={`${app.application}-${i}`} className="border border-border">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="text-sm font-semibold text-foreground truncate">{app.application}</p>
+                          <Badge className={app.riskLevel === "High"
+                            ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                            : app.riskLevel === "Medium"
+                              ? "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
+                              : "bg-green-500/10 text-green-400 border border-green-500/20"}
+                          >
+                            {app.riskLevel} ({Math.round(app.riskScore ?? 0)})
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
+                          <div><span className="block text-foreground font-semibold">{app.incidents ?? 0}</span>Incidents</div>
+                          <div><span className="block text-foreground font-semibold">{app.alerts ?? 0}</span>Alerts</div>
+                          <div><span className="block text-foreground font-semibold">{app.errors ?? 0}</span>Errors</div>
+                          <div><span className="block text-foreground font-semibold">{app.servers ?? 0}</span>Servers</div>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-3">72h trend: {app.trend72h ?? "Stable"}</p>
                       </CardContent>
                     </Card>
                   ))}

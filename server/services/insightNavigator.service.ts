@@ -7,6 +7,21 @@ import { eq, desc, sql, and } from "drizzle-orm";
 import { ollamaClient, DEFAULT_MODEL, parseAIJson } from "./ollama.service";
 import type { Response } from "express";
 
+const configuredStartTimeoutMs = Number(process.env.AI_STREAM_START_TIMEOUT_MS ?? 60000);
+const configuredIdleTimeoutMs = Number(process.env.AI_STREAM_IDLE_TIMEOUT_MS ?? 90000);
+const OLLAMA_STREAM_START_TIMEOUT_MS = Number.isFinite(configuredStartTimeoutMs) && configuredStartTimeoutMs > 0
+  ? configuredStartTimeoutMs
+  : 60000;
+const OLLAMA_STREAM_IDLE_TIMEOUT_MS = Number.isFinite(configuredIdleTimeoutMs) && configuredIdleTimeoutMs > 0
+  ? configuredIdleTimeoutMs
+  : 90000;
+
+function timeoutAfter<T>(ms: number, message: string): Promise<T> {
+  return new Promise<T>((_, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  });
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface HistoryEntry {
@@ -148,7 +163,7 @@ export function buildSystemPrompt(orgName: string, context: string, sessionMemor
     ? `\nSESSION MEMORY (entities discussed earlier in this conversation):\n${sessionMemory}\nUse this context when the user refers to "them", "it", "those servers", etc.\n`
     : "";
 
-  return `You are Perviewsis Insight Navigator AI, an expert enterprise observability assistant for ${orgName}.
+  return `You are ObservaIQ Insight Navigator AI, an expert enterprise observability assistant for ${orgName}.
 You have access to live telemetry data from AppDynamics and Dynatrace. Answer the user's questions using the context below.
 
 CURRENT TELEMETRY CONTEXT:
@@ -196,7 +211,7 @@ async function buildFallbackStructuredResponse(userMessage: string, credIds: num
     return {
       ...base,
       answerText: "No APM credentials are configured for this organisation, so no live incidents can be queried right now.",
-      dashboardLinks: [{ label: "Integrations", href: "/settings/integrations" }],
+      dashboardLinks: [{ label: "Integrations", href: "/integrations" }],
     };
   }
 
@@ -285,11 +300,11 @@ async function buildFallbackStructuredResponse(userMessage: string, credIds: num
     ...base,
     answerText: "There are no active incidents in the current telemetry snapshot. AI model connectivity is unavailable, so this answer uses direct database fallback.",
     recommendations: [
-      { action: "Validate that sync jobs are running and data is fresh.", link: "/settings/integrations", priority: "medium" },
+      { action: "Validate that sync jobs are running and data is fresh.", link: "/integrations", priority: "medium" },
     ],
     dashboardLinks: [
       { label: "Incidents", href: "/incidents" },
-      { label: "Integrations", href: "/settings/integrations" },
+      { label: "Integrations", href: "/integrations" },
     ],
   };
 }
@@ -335,14 +350,31 @@ export async function streamInsightChat(
 
   let fullText = "";
   try {
-    const stream = await ollamaClient.chat({
-      model: DEFAULT_MODEL,
-      messages: messages as any,
-      stream: true,
-    } as any);
+    const stream = await Promise.race([
+      ollamaClient.chat({
+        model: DEFAULT_MODEL,
+        messages: messages as any,
+        stream: true,
+      } as any),
+      timeoutAfter<any>(
+        OLLAMA_STREAM_START_TIMEOUT_MS,
+        `AI stream start timed out after ${Math.round(OLLAMA_STREAM_START_TIMEOUT_MS / 1000)}s`,
+      ),
+    ]);
 
-    for await (const chunk of stream as any) {
-      const token: string = chunk.message?.content ?? "";
+    const iterator = (stream as any)[Symbol.asyncIterator]?.();
+    if (!iterator) throw new Error("AI stream iterator unavailable");
+
+    while (true) {
+      const nextChunk = await Promise.race([
+        iterator.next(),
+        timeoutAfter<IteratorResult<any>>(
+          OLLAMA_STREAM_IDLE_TIMEOUT_MS,
+          `AI stream stalled for ${Math.round(OLLAMA_STREAM_IDLE_TIMEOUT_MS / 1000)}s`,
+        ),
+      ]);
+      if (nextChunk.done) break;
+      const token: string = nextChunk.value?.message?.content ?? "";
       fullText += token;
       if (token) sendEvent({ type: "token", text: token });
     }
@@ -373,7 +405,7 @@ export async function streamInsightChat(
   } catch (err: any) {
     const rawMessage = String(err?.message ?? "");
     const aiUnavailable = err?.code === "ECONNREFUSED"
-      || /fetch failed|ECONNREFUSED|connect|network|timed out/i.test(rawMessage);
+      || /fetch failed|ECONNREFUSED|connect|network|timed out|stream stalled|stream start timed out/i.test(rawMessage);
 
     if (aiUnavailable) {
       const fallback = await buildFallbackStructuredResponse(userMessage, credIds, orgName);
@@ -721,7 +753,7 @@ function matchDemoResponse(question: string, history: HistoryEntry[]): any {
     : "";
 
   return {
-    answerText: `This is a demo environment with pre-seeded observability data for Perviewsis Demo org. The platform is monitoring 8 applications: EcommerceAPI, InventoryManager, PaymentService, ProductCatalog, OrderProcessor, UserAuthService, NotificationService, and ReportingDashboard.${contextNote}\n\nCurrently there are 3 critical active incidents and 10 active alerts. The most severe issues are related to database connection pool exhaustion in EcommerceAPI and N+1 query patterns in InventoryManager.\n\nAsk me about: incidents, errors, capacity risks, service rankings, recommendations, root causes, or specific services.`,
+    answerText: `This is a demo environment with pre-seeded observability data for ObservaIQ Demo org. The platform is monitoring 8 applications: EcommerceAPI, InventoryManager, PaymentService, ProductCatalog, OrderProcessor, UserAuthService, NotificationService, and ReportingDashboard.${contextNote}\n\nCurrently there are 3 critical active incidents and 10 active alerts. The most severe issues are related to database connection pool exhaustion in EcommerceAPI and N+1 query patterns in InventoryManager.\n\nAsk me about: incidents, errors, capacity risks, service rankings, recommendations, root causes, or specific services.`,
     recommendations: [
       { action: "Ask about the most critical incidents to get a prioritised response", link: "/incidents", priority: "medium" },
       { action: "Check the AI recommendations for actionable remediation steps", link: "/ai/recommendations", priority: "medium" },

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -47,7 +47,7 @@ function RiskGauge({ value, label }: { value: number; label: string }) {
 function MetricForecastChart({ historical, forecast, threshold, color, label, unit = "%" }: any) {
   const combined = [
     ...(historical ?? []).map((d: any) => ({ ts: d.ts, value: d.value, predicted: null, upper: null, lower: null })),
-    ...(forecast ?? []).slice(0, 48).map((d: any) => ({ ts: d.ts, value: null, predicted: d.predicted, upper: d.upper, lower: d.lower })),
+    ...(forecast ?? []).map((d: any) => ({ ts: d.ts, value: null, predicted: d.predicted, upper: d.upper, lower: d.lower })),
   ];
   const switchPoint = historical?.[historical.length - 1]?.ts;
 
@@ -90,14 +90,22 @@ function MetricForecastChart({ historical, forecast, threshold, color, label, un
 }
 
 export default function CapacityPlanningGlobal() {
+  const initialSelectedApp = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const appId = params.get("appId");
+    return appId && appId.trim().length > 0 ? appId : ALL_APPS;
+  }, []);
   const [horizon, setHorizon] = useState<Horizon>("72h");
-  const [selectedApp, setSelectedApp] = useState<string>(ALL_APPS);
+  const [selectedApp, setSelectedApp] = useState<string>(initialSelectedApp);
 
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["/api/capacity-planning/global", selectedApp],
+    queryKey: ["/api/capacity-planning/global", selectedApp, horizon],
     queryFn: () => {
-      const qs = selectedApp !== ALL_APPS ? `?appId=${encodeURIComponent(selectedApp)}` : "";
-      return fetch(`/api/capacity-planning/global${qs}`).then(r => r.json());
+      const params = new URLSearchParams();
+      params.set("horizon", horizon);
+      if (selectedApp !== ALL_APPS) params.set("appId", selectedApp);
+      const qs = params.toString();
+      return fetch(`/api/capacity-planning/global?${qs}`).then(r => r.json());
     },
   });
 
@@ -114,6 +122,14 @@ export default function CapacityPlanningGlobal() {
   const s = data?.summary ?? {};
   const horizonData = data?.forecasts?.[horizon] ?? {};
   const metrics = data?.metrics ?? {};
+  const nodesHref = selectedApp !== ALL_APPS
+    ? `/capacity-planning/nodes?appId=${encodeURIComponent(selectedApp)}`
+    : "/capacity-planning/nodes";
+  const formatCurrency = (value: unknown) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "-";
+    return `$${Math.round(n).toLocaleString()}`;
+  };
 
   return (
     <AppLayout>
@@ -156,38 +172,48 @@ export default function CapacityPlanningGlobal() {
           {/* KPI Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: "Total Nodes", value: s.totalNodes ?? "—", icon: <Server className="w-4 h-4 text-blue-400" />, cls: "border-border" },
-              { label: "Critical Nodes", value: s.criticalNodes ?? "—", icon: <AlertTriangle className="w-4 h-4 text-red-400" />, cls: "border-red-500/20 bg-red-500/5" },
-              { label: "Warning Nodes", value: s.warningNodes ?? "—", icon: <AlertTriangle className="w-4 h-4 text-amber-400" />, cls: "border-amber-500/20 bg-amber-500/5" },
-              { label: "CPU Headroom", value: s.headroomCpu != null ? `${s.headroomCpu}%` : "—", icon: <Cpu className="w-4 h-4 text-indigo-400" />, cls: (s.headroomCpu ?? 100) < 20 ? "border-red-500/20 bg-red-500/5" : "border-border" },
-              { label: "Memory Headroom", value: s.headroomMemory != null ? `${s.headroomMemory}%` : "—", icon: <MemoryStick className="w-4 h-4 text-purple-400" />, cls: (s.headroomMemory ?? 100) < 20 ? "border-red-500/20 bg-red-500/5" : "border-border" },
-              { label: "Overall Risk", value: s.overallRiskScore != null ? `${s.overallRiskScore}/100` : "—", icon: <BrainCircuit className="w-4 h-4 text-red-400" />, cls: "border-red-500/20 bg-red-500/5" },
-            ].map(k => (
-              <div key={k.label} className={`rounded-xl border px-4 py-3 ${k.cls}`}>
-                <div className="flex items-center gap-1.5 mb-1">{k.icon}<p className="text-[10px] text-muted-foreground font-medium">{k.label}</p></div>
-                <p className="text-lg font-bold text-foreground">{k.value}</p>
-              </div>
-            ))}
+              { label: "Total Nodes", value: s.totalNodes ?? "-", icon: <Server className="w-4 h-4 text-blue-400" />, cls: "border-border" },
+              { label: "Critical Nodes", value: s.criticalNodes ?? "-", icon: <AlertTriangle className="w-4 h-4 text-red-400" />, cls: "border-red-500/20 bg-red-500/5" },
+              { label: "Warning Nodes", value: s.warningNodes ?? "-", icon: <AlertTriangle className="w-4 h-4 text-amber-400" />, cls: "border-amber-500/20 bg-amber-500/5" },
+              { label: "CPU Headroom", value: s.headroomCpu != null ? `${s.headroomCpu}%` : "-", icon: <Cpu className="w-4 h-4 text-indigo-400" />, cls: (s.headroomCpu ?? 100) < 20 ? "border-red-500/20 bg-red-500/5" : "border-border" },
+              { label: "Memory Headroom", value: s.headroomMemory != null ? `${s.headroomMemory}%` : "-", icon: <MemoryStick className="w-4 h-4 text-purple-400" />, cls: (s.headroomMemory ?? 100) < 20 ? "border-red-500/20 bg-red-500/5" : "border-border" },
+              { label: "Overall Risk", value: s.overallRiskScore != null ? `${s.overallRiskScore}/100` : "-", icon: <BrainCircuit className="w-4 h-4 text-red-400" />, cls: "border-red-500/20 bg-red-500/5" },
+            ].map(k => {
+              const card = (
+                <div className={`rounded-xl border px-4 py-3 ${k.cls}`}>
+                  <div className="flex items-center gap-1.5 mb-1">{k.icon}<p className="text-[10px] text-muted-foreground font-medium">{k.label}</p></div>
+                  <p className="text-lg font-bold text-foreground">{k.value}</p>
+                </div>
+              );
+              if (k.label === "Total Nodes") {
+                return (
+                  <Link key={k.label} href={nodesHref} data-testid="capacity-total-nodes-link" className="block hover:opacity-90 transition-opacity">
+                    {card}
+                  </Link>
+                );
+              }
+              return <div key={k.label}>{card}</div>;
+            })}
           </div>
         </div>
 
         {/* ── HORIZON FORECAST SUMMARY ── */}
-        <Card className="border border-indigo-500/20 bg-indigo-950/10 shadow-sm" data-testid="horizon-forecast-card">
-          <CardHeader className="pb-3 border-b border-indigo-500/10">
-            <CardTitle className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
-              <BrainCircuit className="w-4 h-4" /> Forecast Summary — Next {horizon}
+        <Card className="border border-blue-300/50 bg-blue-50/80 dark:border-blue-500/25 dark:bg-blue-950/20 shadow-sm" data-testid="horizon-forecast-card">
+          <CardHeader className="pb-3 border-b border-blue-300/40 dark:border-blue-500/15">
+            <CardTitle className="text-sm font-semibold text-blue-800 dark:text-blue-200 flex items-center gap-2">
+              <BrainCircuit className="w-4 h-4" /> Forecast Summary - Next {horizon}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 grid grid-cols-2 sm:grid-cols-5 gap-4">
             {[
-              { label: "CPU Peak", value: horizonData.cpuMax != null ? `${horizonData.cpuMax}%` : "—", icon: <Cpu className="w-4 h-4" />, warn: (horizonData.cpuMax ?? 0) >= 85 },
-              { label: "Memory Peak", value: horizonData.memoryMax != null ? `${horizonData.memoryMax}%` : "—", icon: <MemoryStick className="w-4 h-4" />, warn: (horizonData.memoryMax ?? 0) >= 85 },
-              { label: "Disk Peak", value: horizonData.diskMax != null ? `${horizonData.diskMax}%` : "—", icon: <HardDrive className="w-4 h-4" />, warn: (horizonData.diskMax ?? 0) >= 80 },
-              { label: "Network Peak", value: horizonData.networkMax != null ? `${horizonData.networkMax}%` : "—", icon: <Wifi className="w-4 h-4" />, warn: (horizonData.networkMax ?? 0) >= 80 },
-              { label: "Saturation Events", value: horizonData.saturationEvents ?? "—", icon: <AlertTriangle className="w-4 h-4" />, warn: (horizonData.saturationEvents ?? 0) > 0 },
+              { label: "CPU Peak", value: horizonData.cpuMax != null ? `${horizonData.cpuMax}%` : "-", icon: <Cpu className="w-4 h-4" />, warn: (horizonData.cpuMax ?? 0) >= 85 },
+              { label: "Memory Peak", value: horizonData.memoryMax != null ? `${horizonData.memoryMax}%` : "-", icon: <MemoryStick className="w-4 h-4" />, warn: (horizonData.memoryMax ?? 0) >= 85 },
+              { label: "Disk Peak", value: horizonData.diskMax != null ? `${horizonData.diskMax}%` : "-", icon: <HardDrive className="w-4 h-4" />, warn: (horizonData.diskMax ?? 0) >= 80 },
+              { label: "Network Peak", value: horizonData.networkMax != null ? `${horizonData.networkMax}%` : "-", icon: <Wifi className="w-4 h-4" />, warn: (horizonData.networkMax ?? 0) >= 80 },
+              { label: "Saturation Events", value: horizonData.saturationEvents ?? "-", icon: <AlertTriangle className="w-4 h-4" />, warn: (horizonData.saturationEvents ?? 0) > 0 },
             ].map(f => (
-              <div key={f.label} className={`rounded-xl border p-3 text-center ${f.warn ? "border-red-500/20 bg-red-500/5" : "border-border bg-muted/10"}`}>
-                <div className={`flex justify-center mb-1 ${f.warn ? "text-red-400" : "text-indigo-400"}`}>{f.icon}</div>
+              <div key={f.label} className={`rounded-xl border p-3 text-center ${f.warn ? "border-red-500/20 bg-red-500/5" : "border-blue-300/40 bg-white/80 dark:border-blue-500/20 dark:bg-blue-950/20"}`}>
+                <div className={`flex justify-center mb-1 ${f.warn ? "text-red-400" : "text-blue-600 dark:text-blue-300"}`}>{f.icon}</div>
                 <p className={`text-2xl font-bold font-mono ${f.warn ? "text-red-400" : "text-foreground"}`}>{f.value}</p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">{f.label}</p>
               </div>
@@ -251,7 +277,9 @@ export default function CapacityPlanningGlobal() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(data?.topRisks ?? []).map((r: any) => (
+                    {(data?.topRisks ?? []).map((r: any) => {
+                      const drillHref = r.detailHref || r.href || "/capacity-planning/nodes";
+                      return (
                       <tr key={r.id} data-testid={`risk-row-${r.id}`} className="border-b border-border hover:bg-muted/20 transition-colors">
                         <td className="px-4 py-2 font-medium">{r.entity}</td>
                         <td className="px-4 py-2">
@@ -267,7 +295,7 @@ export default function CapacityPlanningGlobal() {
                             <span className={`font-semibold ${r.hoursToSaturation <= 6 ? "text-red-400" : r.hoursToSaturation <= 24 ? "text-amber-400" : "text-muted-foreground"}`}>
                               {r.hoursToSaturation}h
                             </span>
-                          ) : <span className="text-muted-foreground">—</span>}
+                          ) : <span className="text-muted-foreground">-</span>}
                         </td>
                         <td className="px-4 py-2">
                           <div className="flex items-center gap-1.5">
@@ -284,13 +312,20 @@ export default function CapacityPlanningGlobal() {
                               View Details
                             </Link>
                           )}
-                          <Link href={r.href} className="text-slate-500 hover:text-slate-300 flex items-center gap-1">
+                          <Link href={drillHref} className="text-slate-500 hover:text-slate-300 flex items-center gap-1">
                             Drill-in <ExternalLink className="w-3 h-3" />
                           </Link>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    )})}
+                    {(!data?.topRisks || data.topRisks.length === 0) && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
+                          No capacity risks found for the selected scope yet.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </CardContent>
@@ -355,7 +390,7 @@ export default function CapacityPlanningGlobal() {
             </Card>
 
             {/* AI Insights */}
-            <Card className="border border-indigo-500/20 bg-indigo-950/20 shadow-sm" data-testid="ai-insights-panel">
+            <Card className="border border-indigo-500/20 bg-indigo-500/5 shadow-sm" data-testid="ai-insights-panel">
               <CardHeader className="pb-3 border-b border-indigo-500/10">
                 <CardTitle className="text-sm font-semibold text-indigo-300 flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4" /> AI Capacity Insights
@@ -366,10 +401,10 @@ export default function CapacityPlanningGlobal() {
                 <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3">
                   <p className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wide mb-2 flex items-center gap-1"><DollarSign className="w-3 h-3" /> Cost Forecast</p>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div><p className="text-muted-foreground">Current/mo</p><p className="font-bold text-foreground">${data?.aiInsights?.costForecast?.current?.toLocaleString()}</p></div>
-                    <div><p className="text-muted-foreground">30-day forecast</p><p className="font-bold text-amber-400">${data?.aiInsights?.costForecast?.projected30d?.toLocaleString()}</p></div>
-                    <div><p className="text-muted-foreground">90-day forecast</p><p className="font-bold text-red-400">${data?.aiInsights?.costForecast?.projected90d?.toLocaleString()}</p></div>
-                    <div><p className="text-muted-foreground">Optimized</p><p className="font-bold text-green-400">${data?.aiInsights?.costForecast?.optimized?.toLocaleString()}</p></div>
+                    <div><p className="text-muted-foreground">Current/mo</p><p className="font-bold text-foreground">{formatCurrency(data?.aiInsights?.costForecast?.current)}</p></div>
+                    <div><p className="text-muted-foreground">30-day forecast</p><p className="font-bold text-amber-500">{formatCurrency(data?.aiInsights?.costForecast?.projected30d)}</p></div>
+                    <div><p className="text-muted-foreground">90-day forecast</p><p className="font-bold text-red-500">{formatCurrency(data?.aiInsights?.costForecast?.projected90d)}</p></div>
+                    <div><p className="text-muted-foreground">Optimized</p><p className="font-bold text-green-600">{formatCurrency(data?.aiInsights?.costForecast?.optimized)}</p></div>
                   </div>
                 </div>
 
@@ -379,17 +414,17 @@ export default function CapacityPlanningGlobal() {
                   {(data?.aiInsights?.predictions ?? []).map((p: any) => (
                     <div key={p.id} data-testid={`ai-prediction-${p.id}`} className="rounded-lg border border-border bg-muted/10 p-3 space-y-1">
                       <div className="flex items-center justify-between">
-                        <p className="text-[10px] font-bold text-foreground">{p.entity} — {p.metric}</p>
+                        <p className="text-[10px] font-bold text-foreground">{p.entity} - {p.metric}</p>
                         <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${PRIORITY_COLORS[p.severity] ?? PRIORITY_COLORS.Info}`}>{p.severity}</span>
                       </div>
                       <p className="text-[10px] text-muted-foreground leading-relaxed">{p.message}</p>
                       <div className="flex items-center justify-between pt-1">
-                        <p className="text-[10px] text-indigo-400 font-medium">→ {p.action}</p>
+                        <p className="text-[10px] text-indigo-500 font-medium">{"->"} {p.action}</p>
                         <span className="text-[9px] text-green-400">{Math.round(p.confidence * 100)}% confidence</span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px]">
                         <span className="text-muted-foreground">Cost: <strong className="text-foreground">{p.costImpact}</strong></span>
-                        <span className="text-muted-foreground">· Act by: <strong className={p.timeToAction === "Now" ? "text-red-400" : "text-amber-400"}>{p.timeToAction}</strong></span>
+                        <span className="text-muted-foreground">Act by: <strong className={p.timeToAction === "Now" ? "text-red-500" : "text-amber-500"}>{p.timeToAction}</strong></span>
                       </div>
                     </div>
                   ))}
@@ -398,7 +433,7 @@ export default function CapacityPlanningGlobal() {
                 {/* Scaling Strategy */}
                 <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3">
                   <p className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1"><Zap className="w-3 h-3" /> Scaling Strategy</p>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">{data?.aiInsights?.scalingStrategy}</p>
+                  <p className="text-[11px] text-foreground/80 leading-relaxed">{data?.aiInsights?.scalingStrategy ?? "No scaling recommendation available for the selected context."}</p>
                 </div>
               </CardContent>
             </Card>

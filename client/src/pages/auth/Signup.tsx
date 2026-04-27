@@ -38,8 +38,18 @@ export default function Signup() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      if (data?.requiresEmailVerification) {
+        toast({
+          title: "Verify your email",
+          description: data?.verificationEmailSent
+            ? "We sent a verification link to your inbox. Please verify before signing in."
+            : `Email provider is not configured. Use this link for now: ${data?.verificationPreviewUrl ?? "N/A"}`,
+        });
+        navigate("/login");
+        return;
+      }
       navigate("/applications");
     },
     onError: (err: any) => {
@@ -65,7 +75,8 @@ export default function Signup() {
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
-          <img src="/logo.png" alt="Perviewsis" className="h-12 w-auto" />
+          {/*<img src="/logo.png" alt="ObservaIQ" className="h-12 w-auto" />*/}
+          <div className="flex items-center gap-2" data-testid="img-logo"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-logo text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-activity h-4 w-4"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path></svg></div><span className="text-base font-semibold tracking-tight text-foreground">ObservaIQ</span></div>
           <p className="text-sm text-muted-foreground">AI-Powered Observability Platform</p>
         </div>
 
@@ -187,13 +198,14 @@ export default function Signup() {
           </CardContent>
         </Card>
 
-        <p className="text-center text-xs text-muted-foreground">
+        {/*<p className="text-center text-xs text-muted-foreground">
           Developed by{" "}
           <a href="https://www.cosmonautgroup.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
             Cosmonaut Technologies
           </a>
-        </p>
+        </p>*/}
       </div>
     </div>
   );
 }
+

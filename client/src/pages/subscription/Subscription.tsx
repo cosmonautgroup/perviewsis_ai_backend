@@ -154,7 +154,7 @@ export default function Subscription() {
         </Card>
 
         {/* Billing Cycle Toggle */}
-        <div className="flex items-center gap-3">
+        {/*<div className="flex items-center gap-3">
           <span className="text-sm font-medium text-foreground">Billing Cycle</span>
           <div className="flex rounded-lg border border-border overflow-hidden">
             {["monthly", "annual"].map(c => (
@@ -168,10 +168,10 @@ export default function Subscription() {
               </button>
             ))}
           </div>
-        </div>
+        </div>*/}
 
         {/* Plan Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/*<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {PLANS.map(plan => {
             const isCurrent = sub?.plan === plan.id;
             const price = cycle === "annual" ? plan.annualPrice : plan.monthlyPrice;
@@ -221,7 +221,7 @@ export default function Subscription() {
               </Card>
             );
           })}
-        </div>
+        </div>*/}
 
         {/* Stripe placeholder */}
         <Card className="border border-dashed border-border shadow-sm bg-muted/10">

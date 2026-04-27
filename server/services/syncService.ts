@@ -19,7 +19,7 @@ import {
   dbSyncLogs,
   ApmCredential,
 } from "@shared/schema";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, isNull } from "drizzle-orm";
 import { AppDynamicsClient, createAppDynamicsClient } from "./appDynamics";
 import { DynatraceClient, createDynatraceClient, normalizeDTSeverity, normalizeDTStatus } from "./dynatrace";
 import { SyncRunLogger } from "./syncRunLogger";
@@ -38,19 +38,71 @@ export type SyncResult = {
   syncRunId?: string;
 };
 
-const APPD_SYNC_WINDOW_MINS = 365 * 24 * 60;
-const APPD_METRICS_WINDOW_MINS = 24 * 60;
+function latestMetricValue(values?: { startTimeInMillis: number; value: number; count: number }[]): number | null {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => (a.startTimeInMillis ?? 0) - (b.startTimeInMillis ?? 0));
+  const v = Number(sorted[sorted.length - 1]?.value ?? NaN);
+  return Number.isFinite(v) ? v : null;
+}
+
+function latestMetricValueFromSeries(series?: { metricValues?: { startTimeInMillis: number; value: number; count: number }[] }[]): number | null {
+  if (!Array.isArray(series) || series.length === 0) return null;
+  let latestTs = -1;
+  let latestVal: number | null = null;
+  for (const s of series) {
+    for (const point of s?.metricValues ?? []) {
+      const ts = Number(point?.startTimeInMillis ?? NaN);
+      const val = Number(point?.value ?? NaN);
+      if (!Number.isFinite(ts) || !Number.isFinite(val)) continue;
+      if (ts >= latestTs) {
+        latestTs = ts;
+        latestVal = val;
+      }
+    }
+  }
+  return latestVal;
+}
+
+function parseNodeNameFromMetricPath(metricPath?: string | null): string | null {
+  if (!metricPath) return null;
+  const parts = metricPath.split("|").map((p) => p.trim()).filter(Boolean);
+  const idx = parts.findIndex((p) => p.toLowerCase() === "individual nodes");
+  if (idx >= 0 && parts[idx + 1] && parts[idx + 1] !== "*") return parts[idx + 1];
+  const nodesIdx = parts.findIndex((p) => p.toLowerCase() === "nodes");
+  if (nodesIdx >= 0 && parts[nodesIdx + 1] && parts[nodesIdx + 1] !== "*") return parts[nodesIdx + 1];
+  const hwIdx = parts.findIndex((p) => p.toLowerCase() === "hardware resources");
+  if (hwIdx > 0 && parts[hwIdx - 1] && parts[hwIdx - 1] !== "*") return parts[hwIdx - 1];
+  return null;
+}
+
+function canonicalNodeKey(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
 
 // ─── AppDynamics Sync ────────────────────────────────────────────────────────
 async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> {
   const start = Date.now();
-  const decryptedPassword = credential ? decryptSecret(credential.passwordHash) ?? "" : undefined;
+  const resolvedPassword = credential
+    ? ((): string => {
+        const raw = String(credential.passwordHash ?? "");
+        try { return String(decryptSecret(credential.passwordHash) ?? ""); }
+        catch {
+          if (raw.startsWith("enc:")) {
+            throw new Error("Credential decryption failed for AppDynamics password. Check CREDENTIALS_ENCRYPTION_KEY.");
+          }
+          return raw;
+        }
+      })()
+    : undefined;
   const client = credential
     ? new AppDynamicsClient({
         controllerUrl: credential.controllerUrl,
         account: credential.account ?? "",
         username: credential.username ?? "",
-        password: decryptedPassword ?? process.env.APPDYNAMICS_PASSWORD ?? "",
+        password: resolvedPassword ?? process.env.APPDYNAMICS_PASSWORD ?? "",
       })
     : createAppDynamicsClient();
 
@@ -75,63 +127,6 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
   });
 
   let applications = 0, incidents = 0, alerts = 0, servers = 0;
-  const aggregateMetricSeries = (
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    const bucket = new Map<number, { sum: number; count: number }>();
-    for (const s of series ?? []) {
-      for (const point of s.metricValues ?? []) {
-        if (point.value == null) continue;
-        const entry = bucket.get(point.startTimeInMillis) ?? { sum: 0, count: 0 };
-        entry.sum += point.value;
-        entry.count += 1;
-        bucket.set(point.startTimeInMillis, entry);
-      }
-    }
-    return [...bucket.entries()].map(([ts, agg]) => ({
-      ts,
-      value: agg.count > 0 ? agg.sum / agg.count : 0,
-    }));
-  };
-
-  const saveAggregatedMetric = async (
-    appId: number,
-    metricName: string,
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    const points = aggregateMetricSeries(series);
-    for (const p of points) {
-      await db.insert(dbMetrics).values({
-        entityId: String(appId),
-        entityType: "application",
-        source: "appdynamics",
-        credentialId: credential?.id ?? null,
-        metricName,
-        recordedAt: new Date(p.ts),
-        value: p.value,
-      }).onConflictDoNothing();
-    }
-  };
-  const saveMetricSeries = async (
-    appId: number,
-    metricName: string,
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    for (const s of series ?? []) {
-      for (const point of s.metricValues ?? []) {
-        if (point.value == null) continue;
-        await db.insert(dbMetrics).values({
-          entityId: String(appId),
-          entityType: "application",
-          source: "appdynamics",
-          credentialId: credential?.id ?? null,
-          metricName,
-          recordedAt: new Date(point.startTimeInMillis),
-          value: point.value,
-        }).onConflictDoNothing();
-      }
-    }
-  };
 
   try {
     // ── Bulk-fetch all existing externalIds for diff detection ──
@@ -181,7 +176,6 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
         .onConflictDoUpdate({
           target: [dbApplications.externalId, dbApplications.source, dbApplications.credentialId],
           set: {
-            credentialId: credential?.id ?? null,
             name: app.name,
             description: app.description,
             metadata: app as any,
@@ -191,29 +185,48 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
         });
       applications++;
 
-      // 1a. Sync tiers (metadata enrichment)
+      // 1b. Sync app-level performance KPIs from AppDynamics (source of truth for app cards/KPIs)
       try {
-        const tiers = await client.getTiers(app.id);
-        logger.log({
-          endpoint: `/controller/rest/applications/${app.id}/tiers`,
-          requestParams: { applicationId: app.id, output: "JSON" },
-          rawResponse: tiers,
-          newRecords: tiers,
-          updatedRecords: [],
-        });
-        await db.update(dbApplications).set({
-          metadata: { ...(app as any), tiers } as any,
-          updatedAt: new Date(),
-        }).where(and(
-          eq(dbApplications.externalId, String(app.id)),
-          eq(dbApplications.source, "appdynamics"),
-          eq(dbApplications.credentialId, credential?.id ?? null),
-        ));
-      } catch (_) { }
+        const [respSeries, callsSeries, errorsSeries] = await Promise.all([
+          client.getResponseTimeMetrics(app.id),
+          client.getCallsPerMinuteMetrics(app.id),
+          client.getErrorRateMetrics(app.id),
+        ]);
+
+        const appRespMs = latestMetricValueFromSeries(respSeries);
+        const appCallsPerMin = latestMetricValueFromSeries(callsSeries);
+        const appErrorsPerMin = latestMetricValueFromSeries(errorsSeries);
+        const appErrorRatePct = (appCallsPerMin != null && appCallsPerMin > 0 && appErrorsPerMin != null)
+          ? (appErrorsPerMin / appCallsPerMin) * 100
+          : null;
+
+        const appRowWhere = credential?.id != null
+          ? and(
+              eq(dbApplications.externalId, String(app.id)),
+              eq(dbApplications.source, "appdynamics"),
+              eq(dbApplications.credentialId, credential.id),
+            )
+          : and(
+              eq(dbApplications.externalId, String(app.id)),
+              eq(dbApplications.source, "appdynamics"),
+              isNull(dbApplications.credentialId),
+            );
+
+        await db
+          .update(dbApplications)
+          .set({
+            avgResponseTime: (appRespMs != null && Number.isFinite(appRespMs) && appRespMs > 0) ? appRespMs : undefined,
+            callsPerMinute: (appCallsPerMin != null && Number.isFinite(appCallsPerMin) && appCallsPerMin > 0) ? appCallsPerMin : undefined,
+            errorRate: (appErrorRatePct != null && Number.isFinite(appErrorRatePct) && appErrorRatePct >= 0) ? appErrorRatePct : undefined,
+            lastSyncAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(appRowWhere);
+      } catch (_) { /* app KPI metric sync best-effort */ }
 
       // 2. Sync problems/incidents per app
       try {
-        const problems = await client.getProblems(app.id, APPD_SYNC_WINDOW_MINS);
+        const problems = await client.getProblems(app.id);
 
         const newProblems     = problems.filter(p => !existingIncidentIds.has(String(p.id)));
         const updatedProblems = problems.filter(p =>  existingIncidentIds.has(String(p.id)));
@@ -257,15 +270,12 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 
       // 3. Sync health rule violations / alerts per app
       try {
-        const violations = await client.getHealthRuleViolations(app.id, APPD_SYNC_WINDOW_MINS);
-        let appViolationCount = 0;
-        let hasCritical = false;
-        let hasWarning = false;
+        const violations = await client.getHealthRuleViolations(app.id, 10080);
 
         const newViolations     = violations.filter(v => !existingAlertIds.has(String(v.id)));
         const updatedViolations = violations.filter(v =>  existingAlertIds.has(String(v.id)));
         logger.log({
-          endpoint: `/controller/rest/applications/${app.id}/healthrule-violations`,
+          endpoint: `/controller/rest/applications/${app.id}/problems/healthrule-violations`,
           requestParams: { applicationId: app.id, output: "JSON" },
           rawResponse: violations,
           newRecords: newViolations,
@@ -273,21 +283,17 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
         });
 
         for (const v of violations) {
-          appViolationCount++;
-          if (v.severity === "CRITICAL") hasCritical = true;
-          else if (v.severity === "WARNING") hasWarning = true;
-
           await db
             .insert(dbAlerts)
             .values({
               externalId: String(v.id),
               source: "appdynamics",
               applicationId: String(app.id),
-              name: v.healthRuleName,
+              name: v.healthRuleName || v.name || (v as any)?.triggeredEntityDefinition?.name || "Health Rule Violation",
               severity: v.severity === "CRITICAL" ? "Critical" : "Warning",
               status: v.incidentStatus === "OPEN" ? "Active" : "Resolved",
-              triggeredAt: v.occurrenceTime ? new Date(v.occurrenceTime) : null,
-              resolvedAt: v.resolvedTime ? new Date(v.resolvedTime) : null,
+              triggeredAt: ((v as any).occurrenceTime ?? (v as any).startTimeInMillis) ? new Date((v as any).occurrenceTime ?? (v as any).startTimeInMillis) : null,
+              resolvedAt: ((v as any).resolvedTime ?? (v as any).endTimeInMillis) ? new Date((v as any).resolvedTime ?? (v as any).endTimeInMillis) : null,
               metadata: v as any,
               lastSyncAt: new Date(),
             })
@@ -295,32 +301,26 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
               target: [dbAlerts.externalId, dbAlerts.source],
               set: {
                 status: v.incidentStatus === "OPEN" ? "Active" : "Resolved",
-                resolvedAt: v.resolvedTime ? new Date(v.resolvedTime) : null,
+                name: v.healthRuleName || v.name || (v as any)?.triggeredEntityDefinition?.name || "Health Rule Violation",
+                triggeredAt: ((v as any).occurrenceTime ?? (v as any).startTimeInMillis) ? new Date((v as any).occurrenceTime ?? (v as any).startTimeInMillis) : null,
+                resolvedAt: ((v as any).resolvedTime ?? (v as any).endTimeInMillis) ? new Date((v as any).resolvedTime ?? (v as any).endTimeInMillis) : null,
                 metadata: v as any,
                 lastSyncAt: new Date(),
                 updatedAt: new Date(),
               },
             });
           alerts++;
-        }
 
-        if (violations.length > 0) {
-          const status = hasCritical ? "Critical" : hasWarning ? "Warning" : "Healthy";
           await db
             .update(dbApplications)
-            .set({ healthRuleViolations: appViolationCount, status, updatedAt: new Date() })
-            .where(and(
-              eq(dbApplications.externalId, String(app.id)),
-              eq(dbApplications.source, "appdynamics"),
-              eq(dbApplications.credentialId, credential?.id ?? null),
-            ));
+            .set({ healthRuleViolations: alerts })
+            .where(and(eq(dbApplications.externalId, String(app.id)), eq(dbApplications.source, "appdynamics")));
         }
       } catch (_) { }
 
       // 4. Sync nodes/servers per app
       try {
         const nodes = await client.getNodes(app.id);
-        const tierCounts = new Map<string, number>();
 
         const newNodes     = nodes.filter(n => !existingServerIds.has(String(n.id)));
         const updatedNodes = nodes.filter(n =>  existingServerIds.has(String(n.id)));
@@ -334,9 +334,6 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 
         for (const node of nodes) {
           const ipList = node.ipAddresses?.ipAddresses ?? [];
-          if (node.tierName) {
-            tierCounts.set(node.tierName, (tierCounts.get(node.tierName) ?? 0) + 1);
-          }
           await db
             .insert(dbServers)
             .values({
@@ -364,59 +361,138 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
           servers++;
         }
 
-        if (tierCounts.size > 0) {
-          const [topTier] = [...tierCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-          await db
-            .update(dbApplications)
-            .set({ tier: topTier, updatedAt: new Date() })
-            .where(and(
-              eq(dbApplications.externalId, String(app.id)),
-              eq(dbApplications.source, "appdynamics"),
-              eq(dbApplications.credentialId, credential?.id ?? null),
-            ));
-        }
+        // 4b. Backfill node CPU/Memory/Disk into server rows from AppDynamics metric paths
+        try {
+          const [cpuSeries, memSeries, diskSeriesA, diskSeriesB] = await Promise.all([
+            client.getCpuMetrics(app.id),
+            client.getMemoryMetrics(app.id),
+            client.getMetrics(app.id, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Disks|Used %"),
+            client.getMetrics(app.id, "Application Infrastructure Performance|*|Individual Nodes|*|Hardware Resources|Disk|Used %"),
+          ]);
+
+          const buildByNode = (seriesList: Array<{ metricPath?: string | null; metricValues?: { startTimeInMillis: number; value: number; count: number }[] }>) => {
+            const out = new Map<string, number>();
+            for (const series of seriesList ?? []) {
+              const nodeName = parseNodeNameFromMetricPath(series.metricPath);
+              const latest = latestMetricValue(series.metricValues);
+              const key = canonicalNodeKey(nodeName);
+              if (!key || latest == null) continue;
+              out.set(key, latest);
+            }
+            return out;
+          };
+
+          const cpuByNode = buildByNode(cpuSeries ?? []);
+          const memByNode = buildByNode(memSeries ?? []);
+          const diskByNode = buildByNode([...(diskSeriesA ?? []), ...(diskSeriesB ?? [])]);
+
+          for (const node of nodes) {
+            const nodeKeys = [
+              canonicalNodeKey(node.name),
+              canonicalNodeKey((node as any)?.machineName),
+            ].filter(Boolean);
+
+            const findMetric = (m: Map<string, number>) => {
+              for (const key of nodeKeys) {
+                const v = m.get(key);
+                if (v != null) return v;
+              }
+              return null;
+            };
+
+            const cpu = findMetric(cpuByNode);
+            const mem = findMetric(memByNode);
+            const disk = findMetric(diskByNode);
+            if (cpu == null && mem == null && disk == null) continue;
+            await db.update(dbServers)
+              .set({
+                cpuUsage: cpu ?? undefined,
+                memoryUsage: mem ?? undefined,
+                diskUsage: disk ?? undefined,
+                lastSyncAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .where(and(
+                eq(dbServers.source, "appdynamics"),
+                eq(dbServers.applicationId, String(app.id)),
+                eq(dbServers.externalId, String(node.id)),
+              ));
+          }
+        } catch (_) { /* node metric backfill best-effort */ }
       } catch (_) { }
 
       // 5. Sync business transactions
       try {
         const bts = await client.getBusinessTransactions(app.id);
-        const latestPoint = (series: any[]): number | null => {
-          let latestTs = -1;
-          let latestVal: number | null = null;
-          for (const s of series ?? []) {
-            for (const p of s.metricValues ?? []) {
-              if (p?.value == null) continue;
-              const ts = Number(p.startTimeInMillis ?? 0);
-              if (ts >= latestTs) {
-                latestTs = ts;
-                latestVal = Number(p.value);
-              }
-            }
-          }
-          return latestVal;
+        const [rtRows, cpmRows, epmRows, slowRows, verySlowRows] = await Promise.all([
+          client.getMetrics(app.id, "Business Transaction Performance|Business Transactions|*|*|Average Response Time (ms)", 60),
+          client.getMetrics(app.id, "Business Transaction Performance|Business Transactions|*|*|Calls per Minute", 60),
+          client.getMetrics(app.id, "Business Transaction Performance|Business Transactions|*|*|Errors per Minute", 60),
+          client.getMetrics(app.id, "Business Transaction Performance|Business Transactions|*|*|Number of Slow Calls", 60),
+          client.getMetrics(app.id, "Business Transaction Performance|Business Transactions|*|*|Number of Very Slow Calls", 60),
+        ]);
+
+        const metricByBtId = new Map<number, { rt?: number; cpm?: number; epm?: number; slow?: number; verySlow?: number }>();
+        const btIdFromMetricName = (metricName?: string | null) => {
+          const m = String(metricName ?? "").match(/BT:(\d+)/i);
+          if (!m) return null;
+          const n = Number(m[1]);
+          return Number.isFinite(n) ? n : null;
         };
+        const latestMetricNumber = (row: any): number | null => {
+          if (String(row?.metricName ?? "").toUpperCase().includes("METRIC DATA NOT FOUND")) return null;
+          const vals = Array.isArray(row?.metricValues) ? [...row.metricValues] : [];
+          if (vals.length === 0) return null;
+          vals.sort((a: any, b: any) => Number(a?.startTimeInMillis ?? 0) - Number(b?.startTimeInMillis ?? 0));
+          const agg = vals.reduce((acc: { sum: number; count: number }, p: any) => {
+            const s = Number(p?.sum ?? NaN);
+            const c = Number(p?.count ?? NaN);
+            if (Number.isFinite(s) && Number.isFinite(c) && c > 0) {
+              acc.sum += s;
+              acc.count += c;
+            }
+            return acc;
+          }, { sum: 0, count: 0 });
+          if (agg.count > 0) {
+            const avg = agg.sum / agg.count;
+            if (Number.isFinite(avg)) return avg;
+          }
+          const last = vals[vals.length - 1];
+          const current = Number(last?.current ?? NaN);
+          const value = Number(last?.value ?? NaN);
+          if (Number.isFinite(current) && current > 0) return current;
+          if (Number.isFinite(value) && value > 0) return value;
+          if (Number.isFinite(current)) return current;
+          if (Number.isFinite(value)) return value;
+          return null;
+        };
+        const upsertMetric = (rows: any[], field: "rt" | "cpm" | "epm" | "slow" | "verySlow") => {
+          for (const row of rows ?? []) {
+            const btId = btIdFromMetricName(row?.metricName);
+            if (btId == null) continue;
+            const v = latestMetricNumber(row);
+            if (v == null) continue;
+            const cur = metricByBtId.get(btId) ?? {};
+            cur[field] = v;
+            metricByBtId.set(btId, cur);
+          }
+        };
+        upsertMetric(rtRows as any[], "rt");
+        upsertMetric(cpmRows as any[], "cpm");
+        upsertMetric(epmRows as any[], "epm");
+        upsertMetric(slowRows as any[], "slow");
+        upsertMetric(verySlowRows as any[], "verySlow");
 
-        let totalCallsPerMin = 0;
-        let totalErrorsPerMin = 0;
-        let weightedRespSum = 0;
         for (const bt of bts) {
-          const tier = bt.tierName ?? "";
-          const btMetricBase = `Business Transaction Performance|Business Transactions|${tier}|${bt.name}`;
-          const [btErrSeries, btCallsSeries, btRespSeries] = await Promise.all([
-            client.getMetricData(app.id, `${btMetricBase}|Errors per Minute`, APPD_METRICS_WINDOW_MINS).catch(() => [] as any[]),
-            client.getMetricData(app.id, `${btMetricBase}|Calls per Minute`, APPD_METRICS_WINDOW_MINS).catch(() => [] as any[]),
-            client.getMetricData(app.id, `${btMetricBase}|Average Response Time (ms)`, APPD_METRICS_WINDOW_MINS).catch(() => [] as any[]),
-          ]);
-
-          const callsPerMinute = latestPoint(btCallsSeries) ?? bt.callsPerMinute ?? 0;
-          const errorsPerMinute = latestPoint(btErrSeries) ?? bt.errorsPerMinute ?? 0;
-          const averageResponseTime = latestPoint(btRespSeries) ?? bt.averageResponseTime ?? 0;
-          const errorRate = callsPerMinute > 0 ? (errorsPerMinute / callsPerMinute) * 100 : 0;
-          const btStatus = errorRate > 5 ? "Critical" : errorRate > 1 ? "Warning" : "Normal";
-
-          totalCallsPerMin += callsPerMinute;
-          totalErrorsPerMin += errorsPerMinute;
-          weightedRespSum += averageResponseTime * callsPerMinute;
+          const merged = metricByBtId.get(Number(bt.id)) ?? {};
+          const callsPerMinute = Number(merged.cpm ?? bt.callsPerMinute ?? 0);
+          const errorsPerMinute = Number(merged.epm ?? bt.errorsPerMinute ?? 0);
+          const avgResponseTime = Number(merged.rt ?? bt.averageResponseTime ?? 0);
+          const slowCalls = Number(merged.slow ?? 0);
+          const verySlowCalls = Number(merged.verySlow ?? 0);
+          const slowPct = callsPerMinute > 0 ? (slowCalls / callsPerMinute) * 100 : 0;
+          const verySlowPct = callsPerMinute > 0 ? (verySlowCalls / callsPerMinute) * 100 : 0;
+          const btStatus = errorsPerMinute > 5 ? "Critical" : errorsPerMinute > 1 ? "Warning" : "Normal";
           await db.insert(dbTransactions).values({
             externalId: String(bt.id),
             source: "appdynamics",
@@ -424,63 +500,50 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
             applicationId: String(app.id),
             name: bt.name,
             tier: bt.tierName,
-            avgResponseTime: averageResponseTime,
+            avgResponseTime,
             callsPerMinute,
-            errorRate,
+            errorRate: callsPerMinute > 0 ? (errorsPerMinute / callsPerMinute) * 100 : 0,
             status: btStatus,
             metadata: {
-              ...bt,
-              metricsWindowMins: APPD_METRICS_WINDOW_MINS,
-              metricCallsPerMinute: callsPerMinute,
-              metricErrorsPerMinute: errorsPerMinute,
-              metricAvgResponseTime: averageResponseTime,
+              ...(bt as any),
+              errorsPerMinute,
+              slowCalls,
+              verySlowCalls,
+              slowTransactionPercent: slowPct,
+              verySlowTransactionPercent: verySlowPct,
             } as any,
             lastSyncAt: new Date(),
           }).onConflictDoUpdate({
             target: [dbTransactions.externalId, dbTransactions.source, dbTransactions.credentialId],
             set: {
-              avgResponseTime: averageResponseTime,
+              avgResponseTime,
               callsPerMinute,
-              errorRate,
+              errorRate: callsPerMinute > 0 ? (errorsPerMinute / callsPerMinute) * 100 : 0,
               status: btStatus,
               metadata: {
-                ...bt,
-                metricsWindowMins: APPD_METRICS_WINDOW_MINS,
-                metricCallsPerMinute: callsPerMinute,
-                metricErrorsPerMinute: errorsPerMinute,
-                metricAvgResponseTime: averageResponseTime,
+                ...(bt as any),
+                errorsPerMinute,
+                slowCalls,
+                verySlowCalls,
+                slowTransactionPercent: slowPct,
+                verySlowTransactionPercent: verySlowPct,
               } as any,
               lastSyncAt: new Date(),
               updatedAt: new Date(),
             },
           });
         }
-
-        if (bts.length > 0) {
-          const avgResponseTime = totalCallsPerMin > 0 ? (weightedRespSum / totalCallsPerMin) : 0;
-          const errorRate = totalCallsPerMin > 0 ? (totalErrorsPerMin / totalCallsPerMin) * 100 : 0;
-          await db.update(dbApplications).set({
-            callsPerMinute: totalCallsPerMin,
-            avgResponseTime,
-            errorRate,
-            updatedAt: new Date(),
-          }).where(and(
-            eq(dbApplications.externalId, String(app.id)),
-            eq(dbApplications.source, "appdynamics"),
-            eq(dbApplications.credentialId, credential?.id ?? null),
-          ));
-        }
       } catch (_) { }
 
       // 6. Sync application error events
       try {
-        const events = await client.getEvents(app.id, "APPLICATION_ERROR,DIAGNOSTIC_SESSION", APPD_SYNC_WINDOW_MINS);
+        const events = await client.getEvents(app.id, "APPLICATION_ERROR,DIAGNOSTIC_SESSION", 1440);
 
         const newEvents     = events.filter(e => !existingErrorIds.has(String(e.id ?? `${app.id}-${e.eventTime ?? Date.now()}`)));
         const updatedEvents = events.filter(e =>  existingErrorIds.has(String(e.id ?? `${app.id}-${e.eventTime ?? Date.now()}`)));
         logger.log({
           endpoint: `/controller/rest/applications/${app.id}/events`,
-          requestParams: { applicationId: app.id, eventTypes: "APPLICATION_ERROR,DIAGNOSTIC_SESSION", timerangeMinutes: APPD_SYNC_WINDOW_MINS },
+          requestParams: { applicationId: app.id, eventTypes: "APPLICATION_ERROR,DIAGNOSTIC_SESSION", timerangeMinutes: 1440 },
           rawResponse: events,
           newRecords: newEvents,
           updatedRecords: updatedEvents,
@@ -526,65 +589,19 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 
       // 7. Sync CPU metrics
       try {
-        const cpuData = await client.getCpuMetrics(app.id, APPD_METRICS_WINDOW_MINS);
-        await saveMetricSeries(app.id, "cpu_usage", cpuData);
-      } catch (_) { }
-
-      // 8. Sync response time + errors per minute + memory metrics
-      try {
-        const responseTime = await client.getResponseTimeMetrics(app.id, APPD_METRICS_WINDOW_MINS);
-        await saveMetricSeries(app.id, "avg_response_time", responseTime);
-      } catch (_) { }
-
-      try {
-        const errorsPerMin = await client.getErrorRateMetrics(app.id, APPD_METRICS_WINDOW_MINS);
-        await saveMetricSeries(app.id, "errors_per_minute", errorsPerMin);
-      } catch (_) { }
-
-      try {
-        const memory = await client.getMemoryMetrics(app.id, APPD_METRICS_WINDOW_MINS);
-        await saveMetricSeries(app.id, "memory_usage", memory);
-      } catch (_) { }
-
-      // 9. Sync calls per minute
-      try {
-        const callsPerMin = await client.getMetricData(app.id, "Overall Application Performance|Calls per Minute", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "calls_per_minute", callsPerMin);
-      } catch (_) { }
-
-      // 10. Sync baseline response time (if available)
-      try {
-        const baseline = await client.getMetricData(app.id, "Overall Application Performance|Average Response Time (ms)|Baseline", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "baseline_avg_response_time", baseline);
-      } catch (_) { }
-
-      // 11. Sync JVM metrics
-      try {
-        const jvmHeapUsed = await client.getMetricData(app.id, "Application Infrastructure Performance|*|Individual Nodes|*|JVM|Memory:Heap|Used (MB)", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "jvm_heap_used_mb", jvmHeapUsed);
-      } catch (_) { }
-
-      try {
-        const jvmGcTime = await client.getMetricData(app.id, "Application Infrastructure Performance|*|Individual Nodes|*|JVM|Garbage Collection|GC Time Spent Per Minute (ms)", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "jvm_gc_time_ms", jvmGcTime);
-      } catch (_) { }
-
-      // 12. Sync thread metrics
-      try {
-        const threads = await client.getMetricData(app.id, "Application Infrastructure Performance|*|Individual Nodes|*|JVM|Threads|Current No. of Threads", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "jvm_threads", threads);
-      } catch (_) { }
-
-      // 13. Sync business transaction response times
-      try {
-        const btResp = await client.getMetricData(app.id, "Business Transaction Performance|Business Transactions|*|Average Response Time (ms)", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "bt_avg_response_time", btResp);
-      } catch (_) { }
-
-      // 14. Sync database performance (backend response time)
-      try {
-        const dbResp = await client.getMetricData(app.id, "Backends|*|Average Response Time (ms)", APPD_METRICS_WINDOW_MINS);
-        await saveAggregatedMetric(app.id, "db_avg_response_time", dbResp);
+        const cpuData = await client.getCpuMetrics(app.id);
+        for (const series of cpuData) {
+          for (const point of series.metricValues) {
+            await db.insert(dbMetrics).values({
+              entityId: String(app.id),
+              entityType: "application",
+              source: "appdynamics",
+              metricName: "cpu_usage",
+              recordedAt: new Date(point.startTimeInMillis),
+              value: point.value,
+            }).onConflictDoNothing();
+          }
+        }
       } catch (_) { }
     }
 
@@ -627,11 +644,22 @@ async function syncAppDynamics(credential?: ApmCredential): Promise<SyncResult> 
 // ─── Dynatrace Sync ──────────────────────────────────────────────────────────
 async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
   const start = Date.now();
-  const decryptedToken = credential ? decryptSecret(credential.apiToken) ?? "" : undefined;
+  const resolvedToken = credential
+    ? ((): string => {
+        const raw = String(credential.apiToken ?? "");
+        try { return String(decryptSecret(credential.apiToken) ?? ""); }
+        catch {
+          if (raw.startsWith("enc:")) {
+            throw new Error("Credential decryption failed for Dynatrace token. Check CREDENTIALS_ENCRYPTION_KEY.");
+          }
+          return raw;
+        }
+      })()
+    : undefined;
   const client = credential
     ? new DynatraceClient({
         environmentUrl: credential.controllerUrl,
-        apiToken: decryptedToken ?? process.env.DYNATRACE_TOKEN ?? "",
+        apiToken: resolvedToken ?? process.env.DYNATRACE_TOKEN ?? "",
       })
     : createDynatraceClient();
 
@@ -656,63 +684,6 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
   });
 
   let applications = 0, incidents = 0, alerts = 0, servers = 0;
-  const aggregateMetricSeries = (
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    const bucket = new Map<number, { sum: number; count: number }>();
-    for (const s of series ?? []) {
-      for (const point of s.metricValues ?? []) {
-        if (point.value == null) continue;
-        const entry = bucket.get(point.startTimeInMillis) ?? { sum: 0, count: 0 };
-        entry.sum += point.value;
-        entry.count += 1;
-        bucket.set(point.startTimeInMillis, entry);
-      }
-    }
-    return [...bucket.entries()].map(([ts, agg]) => ({
-      ts,
-      value: agg.count > 0 ? agg.sum / agg.count : 0,
-    }));
-  };
-
-  const saveAggregatedMetric = async (
-    appId: number,
-    metricName: string,
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    const points = aggregateMetricSeries(series);
-    for (const p of points) {
-      await db.insert(dbMetrics).values({
-        entityId: String(appId),
-        entityType: "application",
-        source: "appdynamics",
-        credentialId: credential?.id ?? null,
-        metricName,
-        recordedAt: new Date(p.ts),
-        value: p.value,
-      }).onConflictDoNothing();
-    }
-  };
-  const saveMetricSeries = async (
-    appId: number,
-    metricName: string,
-    series: { metricValues?: { startTimeInMillis: number; value: number | null }[] }[]
-  ) => {
-    for (const s of series ?? []) {
-      for (const point of s.metricValues ?? []) {
-        if (point.value == null) continue;
-        await db.insert(dbMetrics).values({
-          entityId: String(appId),
-          entityType: "application",
-          source: "appdynamics",
-          credentialId: credential?.id ?? null,
-          metricName,
-          recordedAt: new Date(point.startTimeInMillis),
-          value: point.value,
-        }).onConflictDoNothing();
-      }
-    }
-  };
 
   try {
     // ── Bulk-fetch all existing externalIds ──
@@ -755,7 +726,6 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
         .onConflictDoUpdate({
           target: [dbApplications.externalId, dbApplications.source, dbApplications.credentialId],
           set: {
-            credentialId: credential?.id ?? null,
             name: svc.displayName,
             metadata: svc as any,
             lastSyncAt: new Date(),
@@ -859,7 +829,6 @@ async function syncDynatrace(credential?: ApmCredential): Promise<SyncResult> {
               entityId: series.metricId,
               entityType: "host",
               source: "dynatrace",
-              credentialId: credential?.id ?? null,
               metricName: "cpu_usage",
               recordedAt: new Date(dataPoint.timestamps[i]),
               value: val,
@@ -1046,15 +1015,3 @@ export function startBackgroundSync(intervalMs = 60000) {
     }
   }, intervalMs);
 }
-
-
-
-
-
-
-
-
-
-
-
-

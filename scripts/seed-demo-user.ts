@@ -8,9 +8,9 @@ import {
 import { hashPassword } from "../server/auth";
 import { eq, and } from "drizzle-orm";
 
-const DEMO_EMAIL = "demo@perviewsis.com";
+const DEMO_EMAIL = "demo@Observaiq.com";
 const DEMO_PASSWORD = "Demo@12345";
-const DEMO_ORG_SLUG = "perviewsis-demo";
+const DEMO_ORG_SLUG = "Observaiq-demo";
 const SOURCE = "appdynamics";
 
 const now = new Date();
@@ -29,7 +29,7 @@ async function main() {
 
   // ── 2. Create org ────────────────────────────────────────────────────────
   const [org] = await db.insert(organizations).values({
-    name: "Perviewsis Demo",
+    name: "ObservaIQ Demo",
     slug: DEMO_ORG_SLUG,
     plan: "enterprise",
     maxUsers: 25,
@@ -227,7 +227,7 @@ async function main() {
 
   console.log("\n✅  Demo seed complete!");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("  Email   : demo@perviewsis.com");
+  console.log("  Email   : demo@Observaiq.com");
   console.log("  Password: Demo@12345");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 

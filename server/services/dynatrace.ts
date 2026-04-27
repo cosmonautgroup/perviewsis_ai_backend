@@ -34,6 +34,8 @@ export interface DTProblem {
 
 export interface DTMetricSeries {
   metricId: string;
+  dimensions?: string[];
+  dimensionMap?: Record<string, string>;
   data: { timestamps: number[]; values: (number | null)[] }[];
 }
 
@@ -102,7 +104,7 @@ export class DynatraceClient {
   async getHosts(pageSize = "100"): Promise<{ entities: DTEntity[]; totalCount: number }> {
     return this.request("/entities", {
       entitySelector: "type(HOST)",
-      fields: "properties,tags",
+      fields: "properties,tags,fromRelationships,toRelationships",
       pageSize,
     });
   }
@@ -110,7 +112,15 @@ export class DynatraceClient {
   async getProcessGroups(pageSize = "100"): Promise<{ entities: DTEntity[]; totalCount: number }> {
     return this.request("/entities", {
       entitySelector: "type(PROCESS_GROUP)",
-      fields: "properties,tags",
+      fields: "properties,tags,fromRelationships,toRelationships",
+      pageSize,
+    });
+  }
+
+  async getProcessGroupInstances(pageSize = "500"): Promise<{ entities: DTEntity[]; totalCount: number }> {
+    return this.request("/entities", {
+      entitySelector: "type(PROCESS_GROUP_INSTANCE)",
+      fields: "properties,tags,fromRelationships,toRelationships",
       pageSize,
     });
   }

@@ -13,7 +13,6 @@ import {
   AlertTriangle, Wifi, Clock, Send
 } from "lucide-react";
 import { CorrelationContextBar } from "@/components/shared/CorrelationContextBar";
-import { CorrelationGraph } from "@/components/shared/CorrelationGraph";
 import { AICorrelationPanel } from "@/components/shared/AICorrelationPanel";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -74,6 +73,24 @@ export default function ErrorDetail() {
   });
 
   const loading = loadingError;
+  const linkedIncident = correlated?.linkedIncident;
+  const relatedAlerts = correlated?.relatedAlerts ?? [];
+  const aiCorrelationConfidence = Number(ai?.confidence ?? 0.7);
+  const aiCorrelationData = errorId ? {
+    summary: ai?.summary ?? `Error ${error?.errorId ?? errorId} is correlated with ${relatedAlerts.length} alert(s)${linkedIncident ? ` and incident ${linkedIncident}` : ""}.`,
+    confidence: aiCorrelationConfidence,
+    strength: Math.round(aiCorrelationConfidence * 100),
+    evidence: [
+      { type: "Error Signal", detail: error?.message ?? "No error message available", score: 0.85 },
+      { type: "Correlated Alerts", detail: `${relatedAlerts.length} related alert(s) detected`, score: relatedAlerts.length > 0 ? 0.8 : 0.3 },
+      ...(linkedIncident ? [{ type: "Incident Link", detail: `Linked incident ${linkedIncident}`, score: 0.9 }] : []),
+    ],
+    suggestions: [
+      ...(linkedIncident ? [{ label: `View Linked Incident ${linkedIncident}`, href: `/incidents/${linkedIncident}` }] : []),
+      ...relatedAlerts.slice(0, 2).map((a: any) => ({ label: `Open Alert ${a.alertId}`, href: `/alerts/${a.alertId}` })),
+      { label: "Back to Error Dashboard", href: "/errors" },
+    ],
+  } : undefined;
 
   function handleDebugSubmit() {
     const q = debugInput.trim();
@@ -225,6 +242,7 @@ export default function ErrorDetail() {
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
+              {aiCorrelationData && <AICorrelationPanel data={aiCorrelationData} size="large" />}
             </div>
 
             {/* Right: AI Summary + Correlated Alerts */}
@@ -602,7 +620,7 @@ export default function ErrorDetail() {
                           <div className="max-w-[90%] rounded-xl bg-indigo-950/40 border border-indigo-500/20 px-4 py-3">
                             <div className="flex items-center gap-1.5 mb-2">
                               <BrainCircuit className="w-3 h-3 text-indigo-400" />
-                              <span className="text-[10px] font-semibold text-indigo-400">Perviewsis</span>
+                              <span className="text-[10px] font-semibold text-indigo-400">ObservaIQ</span>
                             </div>
                             <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{item.a}</p>
                           </div>
@@ -638,39 +656,13 @@ export default function ErrorDetail() {
             </Card>
           </div>
         )}
-
-        {/* ── CORRELATION GRAPH ── */}
-        <div className="flex justify-start">
-          {errorId && <CorrelationGraph entityId={errorId} entityType="error" />}
-        </div>
-
-                {/* ── AI CORRELATION PANEL ── */}
-        {errorId && (() => {
-          const linkedIncident = correlated?.linkedIncident;
-          const relatedAlerts = correlated?.relatedAlerts ?? [];
-          const confidence = Number(ai?.confidence ?? 0.7);
-          const aiCorrelation = {
-            summary: ai?.summary ?? `Error ${error?.errorId ?? errorId} is correlated with ${relatedAlerts.length} alert(s)${linkedIncident ? ` and incident ${linkedIncident}` : ""}.`,
-            confidence,
-            strength: Math.round(confidence * 100),
-            evidence: [
-              { type: "Error Signal", detail: error?.message ?? "No error message available", score: 0.85 },
-              { type: "Correlated Alerts", detail: `${relatedAlerts.length} related alert(s) detected`, score: relatedAlerts.length > 0 ? 0.8 : 0.3 },
-              ...(linkedIncident ? [{ type: "Incident Link", detail: `Linked incident ${linkedIncident}`, score: 0.9 }] : []),
-            ],
-            suggestions: [
-              ...(linkedIncident ? [{ label: `View Linked Incident ${linkedIncident}`, href: `/incidents/${linkedIncident}` }] : []),
-              ...relatedAlerts.slice(0, 2).map((a: any) => ({ label: `Open Alert ${a.alertId}`, href: `/alerts/${a.alertId}` })),
-              { label: "Back to Error Dashboard", href: "/errors" },
-            ],
-          };
-          return <AICorrelationPanel data={aiCorrelation} />;
-        })()}
-
         {/* ── CAPACITY RISK BACKLINKS ── */}
         <CapacityRiskBacklinks entityType="error" entityId={errorId} />
       </div>
     </AppLayout>
   );
 }
+
+
+
 

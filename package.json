@@ -10,9 +10,11 @@
     "check": "tsc",
     "credentials:reencrypt": "tsx scripts/reencrypt-credentials.ts",
     "apm:clean": "tsx scripts/clean-apm-data.ts",
+    "db:ensure-session": "tsx scripts/ensure-session-table.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@radix-ui/react-accordion": "^1.2.4",
@@ -61,6 +63,7 @@
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "next-themes": "^0.4.6",
+    "nodemailer": "^8.0.5",
     "ollama": "^0.6.3",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",

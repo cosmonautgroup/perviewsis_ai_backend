@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Activity, Clock, Zap, Cpu, MemoryStick, Server, AlertCircle,
+  Activity, Clock, Cpu, MemoryStick, Server, AlertCircle,
   BrainCircuit, TrendingUp, TrendingDown, ChevronRight, AlertTriangle,
   CheckCircle2, Flame, Database, Globe, ArrowRight
 } from "lucide-react";
@@ -53,12 +53,21 @@ export default function ApplicationDashboard() {
     }
     return { durationMins: 24 * 60 };
   }, [timeRange, customStart, customEnd]);
+  const txDrilldownQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (metricOpts.durationMins) params.set("durationMins", String(metricOpts.durationMins));
+    if (metricOpts.start) params.set("start", metricOpts.start);
+    if (metricOpts.end) params.set("end", metricOpts.end);
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
+  }, [metricOpts.durationMins, metricOpts.start, metricOpts.end]);
 
   const { data: app, isLoading: appLoading } = useApplication(appId);
   const { data: transactions, isLoading: txLoading } = useTransactions(appId, metricOpts);
   const { data: nodes, isLoading: nodesLoading } = useNodes(appId);
   const { data: responseTimeData } = useAppMetrics(appId, "Response Time", metricOpts);
   const { data: throughputData } = useAppMetrics(appId, "Calls per Minute", metricOpts);
+  const { data: errorRateData } = useAppMetrics(appId, "Error Rate", metricOpts);
   const { data: cpuData } = useAppMetrics(appId, "CPU Usage", metricOpts);
   const { data: memoryData } = useAppMetrics(appId, "Memory Usage", metricOpts);
   const { data: baselineRespData } = useAppMetrics(appId, "Baseline Response Time", metricOpts);
@@ -92,9 +101,56 @@ export default function ApplicationDashboard() {
   if (!app) return <AppLayout>Application not found</AppLayout>;
 
   const hasSummaryMetrics = !!appSummary?.hasMetrics;
-  const avgResponseTime = hasSummaryMetrics && appSummary?.avgResponseTime != null ? Number(appSummary.avgResponseTime) : null;
-  const totalThroughput = hasSummaryMetrics && appSummary?.callsPerMinute != null ? Number(appSummary.callsPerMinute) : null;
-  const avgErrorRate = hasSummaryMetrics && appSummary?.errorRate != null ? Number(appSummary.errorRate) : null;
+  const avgOf = (arr?: { value: number }[]) => {
+    const values = (arr ?? [])
+      .map((p) => Number(p.value))
+      .filter((v): v is number => Number.isFinite(v) && v >= 0);
+    if (values.length === 0) return null;
+    return values.reduce((s, v) => s + v, 0) / values.length;
+  };
+  const trendVsPreviousHour = (arr?: { timestamp: number; value: number }[]) => {
+    const points = (arr ?? [])
+      .map((p) => ({ timestamp: Number(p?.timestamp ?? NaN), value: Number(p?.value ?? NaN) }))
+      .filter((p) => Number.isFinite(p.timestamp) && Number.isFinite(p.value));
+    if (points.length < 2) return null;
+    points.sort((a, b) => a.timestamp - b.timestamp);
+
+    const latestTs = points[points.length - 1].timestamp;
+    const oneHourMs = 60 * 60 * 1000;
+    const currentStart = latestTs - oneHourMs;
+    const previousStart = latestTs - 2 * oneHourMs;
+    const currentPoints = points.filter((p) => p.timestamp > currentStart);
+    const previousPoints = points.filter((p) => p.timestamp > previousStart && p.timestamp <= currentStart);
+
+    const avg = (vals: { value: number }[]) => vals.reduce((s, v) => s + v.value, 0) / vals.length;
+    let currentAvg: number | null = currentPoints.length > 0 ? avg(currentPoints) : null;
+    let previousAvg: number | null = previousPoints.length > 0 ? avg(previousPoints) : null;
+
+    // Fallback for short/custom windows: compare first half vs second half.
+    if (currentAvg == null || previousAvg == null) {
+      const half = Math.floor(points.length / 2);
+      if (half > 0 && points.length - half > 0) {
+        const firstHalf = points.slice(0, half);
+        const secondHalf = points.slice(half);
+        previousAvg = avg(firstHalf);
+        currentAvg = avg(secondHalf);
+      }
+    }
+
+    if (currentAvg == null || previousAvg == null) return null;
+    if (Math.abs(previousAvg) < 1e-9) {
+      if (Math.abs(currentAvg) < 1e-9) return 0;
+      return 100;
+    }
+    return ((currentAvg - previousAvg) / Math.abs(previousAvg)) * 100;
+  };
+  // Use the same source as graphs so KPI cards follow selected time window.
+  const avgResponseTimeFromSeries = avgOf(responseTimeData);
+  const totalThroughputFromSeries = avgOf(throughputData);
+  const avgErrorRateFromSeries = avgOf(errorRateData);
+  const avgResponseTime = avgResponseTimeFromSeries ?? (hasSummaryMetrics && appSummary?.avgResponseTime != null ? Number(appSummary.avgResponseTime) : null);
+  const totalThroughput = totalThroughputFromSeries ?? (hasSummaryMetrics && appSummary?.callsPerMinute != null ? Number(appSummary.callsPerMinute) : null);
+  const avgErrorRate = avgErrorRateFromSeries ?? (hasSummaryMetrics && appSummary?.errorRate != null ? Number(appSummary.errorRate) : null);
   // Treat error budget as % of allowed errors consumed within a 99% SLO (1% error budget).
   const errorBudgetThresholdPct = 1;
   const errorBudgetLeftPct = avgErrorRate != null
@@ -102,16 +158,22 @@ export default function ApplicationDashboard() {
     : null;
   const nodesCpu = (nodes ?? []).map(n => n.cpuUsage).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
   const nodesMem = (nodes ?? []).map(n => n.memoryUsage).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+  const serversCpu = (servers ?? []).map(s => s.cpuUsage).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+  const serversMem = (servers ?? []).map(s => s.memoryUsage).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
   const cpuSeriesVals = (cpuData ?? []).map(p => p.value).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
   const memSeriesVals = (memoryData ?? []).map(p => p.value).filter((v): v is number => typeof v === "number" && !Number.isNaN(v));
+  const serversCpuWithData = serversCpu.filter((v) => v > 0);
+  const serversMemWithData = serversMem.filter((v) => v > 0);
   const nodesCpuWithData = nodesCpu.filter((v) => v > 0);
   const nodesMemWithData = nodesMem.filter((v) => v > 0);
+  const avgCpuFromServers = serversCpuWithData.length > 0 ? (serversCpuWithData.reduce((s, v) => s + v, 0) / serversCpuWithData.length) : null;
+  const avgMemFromServers = serversMemWithData.length > 0 ? (serversMemWithData.reduce((s, v) => s + v, 0) / serversMemWithData.length) : null;
   const avgCpuFromNodes = nodesCpuWithData.length > 0 ? (nodesCpuWithData.reduce((s, v) => s + v, 0) / nodesCpuWithData.length) : null;
   const avgMemFromNodes = nodesMemWithData.length > 0 ? (nodesMemWithData.reduce((s, v) => s + v, 0) / nodesMemWithData.length) : null;
   const avgCpuFromSeries = cpuSeriesVals.length > 0 ? (cpuSeriesVals.reduce((s, v) => s + v, 0) / cpuSeriesVals.length) : null;
   const avgMemFromSeries = memSeriesVals.length > 0 ? (memSeriesVals.reduce((s, v) => s + v, 0) / memSeriesVals.length) : null;
-  const avgCpu = avgCpuFromNodes ?? avgCpuFromSeries;
-  const avgMem = avgMemFromNodes ?? avgMemFromSeries;
+  const avgCpu = avgCpuFromServers ?? avgCpuFromNodes ?? avgCpuFromSeries;
+  const avgMem = avgMemFromServers ?? avgMemFromNodes ?? avgMemFromSeries;
   const criticalNodes = (nodes ?? []).filter(n =>
     n.status === "Critical" || Number(n.cpuUsage ?? 0) > 80 || Number(n.memoryUsage ?? 0) > 85
   ).length;
@@ -133,6 +195,12 @@ export default function ApplicationDashboard() {
   const jvmHeap = latestOf(jvmHeapData);
   const jvmGc = latestOf(jvmGcData);
   const threadCount = latestOf(threadData);
+  const throughputChartData = (throughputData ?? []).map((point) => ({
+    ...point,
+    value: Math.round(Number(point.value ?? 0)),
+  }));
+  const responseTrend = trendVsPreviousHour(responseTimeData);
+  const throughputTrend = trendVsPreviousHour(throughputData);
   const lastSyncLabel = appSummary?.lastSyncAt
     ? new Date(appSummary.lastSyncAt).toLocaleString()
     : null;
@@ -214,7 +282,7 @@ export default function ApplicationDashboard() {
         )}
 
         {/* SLA Score row */}
-        {rich && (
+        {/*{rich && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: "Response Time", value: avgResponseTime != null ? `${avgResponseTime.toFixed(0)}ms` : "No Data", bad: avgResponseTime != null && avgResponseTime > 2000 },
@@ -238,7 +306,7 @@ export default function ApplicationDashboard() {
               )
             ))}
           </div>
-        )}
+        )}*/}
 
         <Tabs defaultValue="services" className="space-y-5">
           <TabsList className="bg-card border border-border p-1 grid grid-cols-2 w-fit">
@@ -254,10 +322,35 @@ export default function ApplicationDashboard() {
           <TabsContent value="services" className="space-y-5">
             {/* SRE KPIs */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <MetricCard title="Avg Response" value={avgResponseTime != null ? Math.round(avgResponseTime) : "No Data"} unit={avgResponseTime != null ? "ms" : undefined} icon={<Clock className="w-4 h-4" />} trend={{ value: 22.1, isPositiveGood: false }} isLoading={txLoading} />
-              <MetricCard title="Throughput" value={totalThroughput != null ? Math.round(totalThroughput) : "No Data"} unit={totalThroughput != null ? "cpm" : undefined} icon={<Activity className="w-4 h-4" />} trend={{ value: 8.5, isPositiveGood: true }} isLoading={txLoading} />
-              <MetricCard title="Error Rate" value={avgErrorRate != null ? avgErrorRate.toFixed(2) : "No Data"} unit={avgErrorRate != null ? "%" : undefined} icon={<AlertCircle className="w-4 h-4" />} trend={{ value: 1.2, isPositiveGood: false }} isLoading={txLoading} />
-              <MetricCard title="Error Budget" value={errorBudgetLeftPct != null ? errorBudgetLeftPct.toFixed(2) : "No Data"} unit={errorBudgetLeftPct != null ? "%" : undefined} icon={<Zap className="w-4 h-4" />} isLoading={txLoading} />
+              <MetricCard
+                title="Avg Response"
+                value={avgResponseTime != null ? Math.round(avgResponseTime) : "No Data"}
+                unit={avgResponseTime != null ? "ms" : undefined}
+                icon={<Clock className="w-4 h-4" />}
+                trend={responseTrend != null ? { value: Number(responseTrend.toFixed(1)), isPositiveGood: false } : undefined}
+                isLoading={txLoading}
+              />
+              <MetricCard
+                title="Throughput"
+                value={totalThroughput != null ? Math.round(totalThroughput) : "No Data"}
+                unit={totalThroughput != null ? "cpm" : undefined}
+                icon={<Activity className="w-4 h-4" />}
+                trend={throughputTrend != null ? { value: Number(throughputTrend.toFixed(1)), isPositiveGood: true } : undefined}
+                isLoading={txLoading}
+              />
+              <Link href={`/errors?appId=${encodeURIComponent(drilldownAppId)}&q=${drilldownQuery}`}>
+                <div className={`rounded-xl border px-4 py-3 h-full cursor-pointer hover:border-primary/40 transition-colors ${avgErrorRate != null && avgErrorRate > 3 ? "bg-red-500/5 border-red-500/20" : "bg-card border-border"}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs text-muted-foreground">Error Rate</p>
+                    <AlertCircle className="w-4 h-4 text-muted-foreground/60" />
+                  </div>
+                  <p className={`text-xl font-bold font-mono ${avgErrorRate != null && avgErrorRate > 3 ? "text-red-400" : "text-foreground"}`}>
+                    {avgErrorRate != null ? `${avgErrorRate.toFixed(2)}%` : "No Data"}
+                  </p>
+                  <p className="text-[10px] text-primary mt-1">Drill down</p>
+                </div>
+              </Link>
+              <MetricCard title="SLA Score" value={rich?.slaScore != null ? rich.slaScore : "No Data"} unit={rich?.slaScore != null ? "%" : undefined} icon={<CheckCircle2 className="w-4 h-4" />} isLoading={txLoading} />
             </div>
 
             {/* SRE SLO / Latency Breakdown */}
@@ -309,11 +402,11 @@ export default function ApplicationDashboard() {
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Throughput ({timeRange === "custom" ? "Custom" : timeRange})</CardTitle></CardHeader>
                 <CardContent className="h-[240px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={throughputData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                    <BarChart data={throughputChartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                       <XAxis dataKey="timestamp" tickFormatter={fmtTime} stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                      <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                      <Tooltip />
+                      <YAxis tickFormatter={(v) => String(Math.round(Number(v)))} stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                      <Tooltip formatter={(v: number | string) => [Math.round(Number(v)), "Calls/min"]} />
                       <Bar dataKey="value" name="Calls/min" fill="#22c55e" radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -356,7 +449,12 @@ export default function ApplicationDashboard() {
                         </div>
                         <div className="flex-1">
                           <div className="flex flex-wrap items-center gap-2 mb-1">
-                            <span className="font-semibold text-foreground">{svc.service}</span>
+                            <Link
+                              href={`/applications/${appId}/service-risks/${encodeURIComponent(String(svc.service ?? ""))}${txDrilldownQuery}`}
+                              className="font-semibold text-primary hover:underline"
+                            >
+                              {svc.service}
+                            </Link>
                             <Badge variant="secondary" className="text-xs">{svc.tier}</Badge>
                             <TrendChip trend={svc.trend} />
                           </div>
@@ -375,10 +473,13 @@ export default function ApplicationDashboard() {
                             <p className="text-[10px] text-muted-foreground">Confidence</p>
                             <p className="text-xs font-bold text-foreground">{svc.confidence}%</p>
                           </div>
+                          <Link href={`/applications/${appId}/service-risks/${encodeURIComponent(String(svc.service ?? ""))}${txDrilldownQuery}`} className="text-xs text-primary hover:underline">
+                            Drilldown
+                          </Link>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2 ml-10">
-                        {svc.recommendations.slice(0, 3).map((r: string) => (
+                        {(svc.recommendations ?? []).slice(0, 3).map((r: string) => (
                           <span key={r} className="text-xs bg-muted/40 border border-border rounded px-2 py-1 text-muted-foreground flex items-center gap-1">
                             <CheckCircle2 className="w-2.5 h-2.5 text-green-500" />{r}
                           </span>
@@ -476,18 +577,19 @@ export default function ApplicationDashboard() {
                         <th className="px-5 py-3 text-right">Error %</th>
                         <th className="px-5 py-3 text-center">Outliers</th>
                         <th className="px-5 py-3 text-center">Status</th>
+                        <th className="px-5 py-3 text-right sticky right-0 z-10 bg-muted/40">Drilldown</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {txLoading ? (
                         <tr>
-                          <td colSpan={12} className="px-5 py-6 text-center text-sm text-muted-foreground">
+                          <td colSpan={13} className="px-5 py-6 text-center text-sm text-muted-foreground">
                             Loading business transactions...
                           </td>
                         </tr>
                       ) : (transactions ?? []).length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="px-5 py-6 text-center text-sm text-muted-foreground">
+                          <td colSpan={13} className="px-5 py-6 text-center text-sm text-muted-foreground">
                             No business transactions found for selected time range.
                           </td>
                         </tr>
@@ -503,7 +605,11 @@ export default function ApplicationDashboard() {
                         const outliers = avg > 2000 || err > 3 || verySlowPct > 0;
                         return (
                         <tr key={tx.id} className="hover:bg-muted/20">
-                          <td className="px-5 py-3 font-medium text-foreground">{tx.name}</td>
+                          <td className="px-5 py-3 font-medium text-foreground">
+                            <Link href={`/applications/${appId}/transactions/${tx.id}${txDrilldownQuery}`} className="hover:underline text-primary">
+                              {tx.name}
+                            </Link>
+                          </td>
                           <td className="px-5 py-3 text-muted-foreground">{tx.tier}</td>
                           <td className={`px-5 py-3 text-right font-mono ${avg > 2000 ? "text-red-400 font-bold" : "text-foreground"}`}>{avg.toLocaleString()}</td>
                           <td className={`px-5 py-3 text-right font-mono ${p95 > 3000 ? "text-orange-400 font-bold" : "text-foreground"}`}>{p95.toLocaleString()}</td>
@@ -518,6 +624,9 @@ export default function ApplicationDashboard() {
                               : <span className="text-[10px] text-muted-foreground">—</span>}
                           </td>
                           <td className="px-5 py-3 text-center"><StatusBadge status={tx.status} showIcon={false} /></td>
+                          <td className="px-5 py-3 text-right sticky right-0 z-10 bg-card">
+                            <Link href={`/applications/${appId}/transactions/${tx.id}${txDrilldownQuery}`} className="text-xs text-primary hover:underline">Open</Link>
+                          </td>
                         </tr>
                         );
                       })}
@@ -582,7 +691,7 @@ export default function ApplicationDashboard() {
               <CardHeader className="pb-3 border-b border-border flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-semibold">Servers / Pods</CardTitle>
                 <Button size="sm" variant="outline" className="text-xs" asChild>
-                  <Link href={`/applications/${appId}/servers`}>View All Servers <ArrowRight className="w-3 h-3 ml-1" /></Link>
+                  <Link href={`/applications/${appId}/tier-nodes`}>View All Servers <ArrowRight className="w-3 h-3 ml-1" /></Link>
                 </Button>
               </CardHeader>
               <CardContent className="p-0">
@@ -628,7 +737,7 @@ export default function ApplicationDashboard() {
                             {srv.alerts > 0 ? <span className="text-xs text-red-400 font-bold">{srv.alerts}</span> : <span className="text-xs text-green-500">—</span>}
                           </td>
                           <td className="px-5 py-3 text-right">
-                            <Link href={`/applications/${appId}/servers/${srv.id}`} className="text-xs text-primary hover:underline">Drilldown →</Link>
+                            <Link href={`/applications/${appId}/tier-nodes/${srv.id}`} className="text-xs text-primary hover:underline">Drilldown →</Link>
                           </td>
                         </tr>
                         );

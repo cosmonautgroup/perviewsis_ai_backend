@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, ChevronRight, Activity, Clock, AlertTriangle, Flame } from "lucide-react";
+import { Link } from "wouter";
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { format } from "date-fns";
 
@@ -119,7 +120,13 @@ export default function SreView() {
                 {data?.topDegradingServices?.map((svc: any) => (
                   <div key={svc.name} className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-muted/20 px-4 py-3">
                     <div className="flex-1">
-                      <p className="font-medium text-foreground">{svc.name}</p>
+                      {svc?.appId ? (
+                        <Link href={`/applications/${svc.appId}`} className="font-medium text-primary hover:underline">
+                          {svc.name}
+                        </Link>
+                      ) : (
+                        <p className="font-medium text-foreground">{svc.name}</p>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-4 text-sm font-mono">
                       <span className="text-muted-foreground">Latency: <span className={svc.latency > 2000 ? "text-red-400 font-bold" : "text-foreground"}>{svc.latency}ms</span></span>
@@ -155,7 +162,15 @@ export default function SreView() {
                   <tbody className="divide-y divide-border">
                     {data?.transactionHotspots?.map((tx: any) => (
                       <tr key={tx.name} className="hover:bg-muted/20">
-                        <td className="px-4 py-3 font-medium text-foreground">{tx.name}</td>
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          {tx?.appId && tx?.txId ? (
+                            <Link href={`/applications/${tx.appId}/transactions/${encodeURIComponent(String(tx.txId))}`} className="text-primary hover:underline">
+                              {tx.name}
+                            </Link>
+                          ) : (
+                            tx.name
+                          )}
+                        </td>
                         <td className={`px-4 py-3 text-right font-mono ${tx.avgResponseTime > 2000 ? "text-red-400 font-bold" : "text-muted-foreground"}`}>{tx.avgResponseTime.toLocaleString()}</td>
                         <td className={`px-4 py-3 text-right font-mono ${tx.p99 > 5000 ? "text-red-400 font-bold" : "text-muted-foreground"}`}>{tx.p99.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right font-mono text-muted-foreground">{tx.callsPerMinute}</td>
