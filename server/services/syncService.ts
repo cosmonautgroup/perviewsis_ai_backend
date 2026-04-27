@@ -19,7 +19,7 @@ import {
   dbSyncLogs,
   ApmCredential,
 } from "@shared/schema";
-import { eq, and, count, isNull } from "drizzle-orm";
+import { eq, and, count, isNull, sql } from "drizzle-orm";
 import { AppDynamicsClient, createAppDynamicsClient } from "./appDynamics";
 import { DynatraceClient, createDynatraceClient, normalizeDTSeverity, normalizeDTStatus } from "./dynatrace";
 import { SyncRunLogger } from "./syncRunLogger";
@@ -982,14 +982,77 @@ export async function syncSource(source: "appdynamics" | "dynatrace", credential
     : syncDynatrace(credential, actorUserId);
 }
 
-export async function getSyncStatus(): Promise<any> {
+export async function getSyncStatus(credentialIds?: number[]): Promise<any> {
   try {
-    const logs = await db.select().from(dbSyncLogs).orderBy(dbSyncLogs.startedAt).limit(20);
-    const credentials = await db.select().from(apmCredentials);
-    const [appCount]    = await db.select({ count: count() }).from(dbApplications);
-    const [incCount]    = await db.select({ count: count() }).from(dbIncidents);
-    const [alertCount]  = await db.select({ count: count() }).from(dbAlerts);
-    const [serverCount] = await db.select({ count: count() }).from(dbServers);
+    const scopedIds = Array.isArray(credentialIds)
+      ? credentialIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      : null;
+    if (scopedIds != null && scopedIds.length === 0) {
+      return {
+        credentials: [],
+        counts: { applications: 0, incidents: 0, alerts: 0, servers: 0 },
+        recentLogs: [],
+        envCredentials: {
+          appDynamics: !!(process.env.APPDYNAMICS_URL && process.env.APPDYNAMICS_ACCOUNT),
+          dynatrace: !!(process.env.DYNATRACE_URL && process.env.DYNATRACE_TOKEN),
+        },
+      };
+    }
+
+    const credFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? eq(apmCredentials.id, scopedIds[0])
+        : sql`${apmCredentials.id} = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`;
+
+    const logFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? eq(dbSyncLogs.credentialId, scopedIds[0])
+        : sql`${dbSyncLogs.credentialId} = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`;
+
+    const appFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? eq(dbApplications.credentialId, scopedIds[0])
+        : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`;
+
+    const incidentsFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? sql`${dbIncidents.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${scopedIds[0]})`
+        : sql`${dbIncidents.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`;
+
+    const alertsFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? sql`${dbAlerts.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${scopedIds[0]})`
+        : sql`${dbAlerts.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`;
+
+    const serversFilter = scopedIds == null
+      ? undefined
+      : scopedIds.length === 1
+        ? sql`${dbServers.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ${scopedIds[0]})`
+        : sql`${dbServers.applicationId} IN (SELECT external_id::text FROM apm_applications WHERE credential_id = ANY(ARRAY[${sql.join(scopedIds.map((id) => sql`${id}`), sql`, `)}]::integer[]))`;
+
+    const logs = await (logFilter
+      ? db.select().from(dbSyncLogs).where(logFilter).orderBy(dbSyncLogs.startedAt).limit(20)
+      : db.select().from(dbSyncLogs).orderBy(dbSyncLogs.startedAt).limit(20));
+    const credentials = await (credFilter
+      ? db.select().from(apmCredentials).where(credFilter)
+      : db.select().from(apmCredentials));
+    const [appCount] = await (appFilter
+      ? db.select({ count: count() }).from(dbApplications).where(appFilter)
+      : db.select({ count: count() }).from(dbApplications));
+    const [incCount] = await (incidentsFilter
+      ? db.select({ count: count() }).from(dbIncidents).where(incidentsFilter)
+      : db.select({ count: count() }).from(dbIncidents));
+    const [alertCount] = await (alertsFilter
+      ? db.select({ count: count() }).from(dbAlerts).where(alertsFilter)
+      : db.select({ count: count() }).from(dbAlerts));
+    const [serverCount] = await (serversFilter
+      ? db.select({ count: count() }).from(dbServers).where(serversFilter)
+      : db.select({ count: count() }).from(dbServers));
 
     return {
       credentials: credentials.map(c => ({

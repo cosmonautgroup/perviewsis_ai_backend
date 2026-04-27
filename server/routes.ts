@@ -14,7 +14,7 @@ import { syncAll, syncSource, getSyncStatus } from "./services/syncService";
 import { listSyncRuns, getSyncRunFilePath } from "./services/syncRunLogger";
 import {
   runCausalPredictive, runRootCause, runCorrelationInsights,
-  runRecommendations, runServiceRiskRanking, runCausalPredictiveFallback, getOrgCredIds,
+  runRecommendations, runServiceRiskRanking, runCausalPredictiveFallback,
 } from "./services/ai.service";
 import { checkOllamaHealth } from "./services/ollama.service";
 import {
@@ -85,6 +85,59 @@ export async function registerRoutes(
       .from(apmCredentials)
       .where(and(...whereClauses));
     return { user, orgData, creds };
+  };
+
+  const scopedAppContextForUser = async (req: any, includeInactive = false) => {
+    const { user, orgData, creds } = await scopedCredsForUser(req, includeInactive);
+    const credIds = creds.map((c) => c.id);
+    if (credIds.length === 0) {
+      return {
+        user,
+        orgData,
+        creds,
+        credIdSet: new Set<number>(),
+        apps: [] as Array<{ id: number; externalId: string | null; name: string; credentialId: number | null; source: string }>,
+        appExternalIdSet: new Set<string>(),
+        appIdSet: new Set<number>(),
+      };
+    }
+    const apps = await db.select({
+      id: dbApplications.id,
+      externalId: dbApplications.externalId,
+      name: dbApplications.name,
+      credentialId: dbApplications.credentialId,
+      source: dbApplications.source,
+    }).from(dbApplications).where(credIds.length === 1
+      ? eq(dbApplications.credentialId, credIds[0])
+      : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map((id) => sql`${id}`), sql`, `)}]::integer[])`);
+
+    return {
+      user,
+      orgData,
+      creds,
+      credIdSet: new Set<number>(credIds),
+      apps,
+      appExternalIdSet: new Set<string>(apps.map((a) => String(a.externalId ?? "")).filter(Boolean)),
+      appIdSet: new Set<number>(apps.map((a) => Number(a.id)).filter((v) => Number.isFinite(v))),
+    };
+  };
+
+  const isScopedDbApp = (scope: {
+    credIdSet: Set<number>;
+    appExternalIdSet: Set<string>;
+    appIdSet: Set<number>;
+  }, dbApp: any) => {
+    const credId = Number(dbApp?.credentialId ?? NaN);
+    const appId = Number(dbApp?.id ?? NaN);
+    const externalId = String(dbApp?.externalId ?? "");
+    return (
+      Number.isFinite(credId) &&
+      scope.credIdSet.has(credId) &&
+      Number.isFinite(appId) &&
+      scope.appIdSet.has(appId) &&
+      externalId.length > 0 &&
+      scope.appExternalIdSet.has(externalId)
+    );
   };
 
   // ══════════════════════════════════════════════════════════════
@@ -708,13 +761,9 @@ export async function registerRoutes(
     const controllerIdRaw = req.query.controllerId != null ? Number(req.query.controllerId) : NaN;
     const hasControllerFilter = Number.isFinite(controllerIdRaw) && controllerIdRaw > 0;
     if (user) {
-      const orgData = await getUserOrg(user.id);
-      if (orgData) {
-        const orgCreds = await db.select({ id: apmCredentials.id })
-          .from(apmCredentials)
-          .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-        if (orgCreds.length === 0) return res.json([]);
-        const orgCredIds = orgCreds.map(c => c.id);
+      const { creds } = await scopedCredsForUser(req);
+      if (creds.length > 0) {
+        const orgCredIds = creds.map(c => c.id);
         if (hasControllerFilter && !orgCredIds.includes(controllerIdRaw)) return res.json([]);
         const credIds = hasControllerFilter ? [controllerIdRaw] : orgCredIds;
         const apps = await db.select().from(dbApplications)
@@ -1080,7 +1129,10 @@ export async function registerRoutes(
     const durationMins = Number.isFinite(durationMinsRaw) && durationMinsRaw > 0
       ? durationMinsRaw
       : (Number.isFinite(durationFromRange) ? durationFromRange : 24 * 60);
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) return res.status(404).json({ message: "Transaction not found" });
     const dbApp = await resolveDbApp(req.params.id);
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Transaction not found" });
 
     if (dbApp?.externalId) {
       const pct = (num: number, den: number) => {
@@ -1262,9 +1314,6 @@ export async function registerRoutes(
       }
     }
 
-    const list = await storage.getBusinessTransactions(appId);
-    const fallback = (list ?? []).find((t: any) => String(t.id) === txIdRaw);
-    if (fallback) return res.json(fallback);
     return res.status(404).json({ message: "Transaction not found" });
   });
   app.get("/api/applications/:id/transactions/:txId/diagnostics", async (req, res) => {
@@ -1279,9 +1328,13 @@ export async function registerRoutes(
     const durationMins = Number.isFinite(durationMinsRaw) && durationMinsRaw > 0
       ? durationMinsRaw
       : (Number.isFinite(durationFromRange) ? durationFromRange : 24 * 60);
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) {
+      return res.status(404).json({ message: "Application not found" });
+    }
 
     const dbApp = await resolveDbApp(req.params.id);
-    if (!dbApp?.externalId) {
+    if (!dbApp?.externalId || !isScopedDbApp(scope, dbApp)) {
       return res.status(404).json({ message: "Application not found" });
     }
 
@@ -1840,14 +1893,9 @@ export async function registerRoutes(
       const user = req.user as import("@shared/schema").User | undefined;
       if (!user) return res.json(emptyPayload);
 
-      const orgData = await getUserOrg(user.id);
-      if (!orgData) return res.json(emptyPayload);
-
-      const orgCreds = await db.select({ id: apmCredentials.id })
-        .from(apmCredentials)
-        .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-      if (orgCreds.length === 0) return res.json(emptyPayload);
-      const credIds = orgCreds.map((c) => c.id);
+      const { creds } = await scopedCredsForUser(req);
+      if (creds.length === 0) return res.json(emptyPayload);
+      const credIds = creds.map((c) => c.id);
 
       const apps = await db.select({
         id: dbApplications.id,
@@ -2108,14 +2156,9 @@ export async function registerRoutes(
     try {
       const user = req.user as import("@shared/schema").User | undefined;
       if (!user) return res.json(await storage.getPersonaSre());
-      const orgData = await getUserOrg(user.id);
-      if (!orgData) return res.json(await storage.getPersonaSre());
-
-      const orgCreds = await db.select({ id: apmCredentials.id })
-        .from(apmCredentials)
-        .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-      if (orgCreds.length === 0) return res.json(await storage.getPersonaSre());
-      const credIds = orgCreds.map((c) => c.id);
+      const { creds } = await scopedCredsForUser(req);
+      if (creds.length === 0) return res.json(await storage.getPersonaSre());
+      const credIds = creds.map((c) => c.id);
 
       const apps = await db.select({
         id: dbApplications.id,
@@ -2708,11 +2751,9 @@ export async function registerRoutes(
 
   // ── Helper: get credIds for the requesting user's org ──────────────────────
   async function resolveCredIds(req: any): Promise<number[] | null> {
-    const user = req.user as import("@shared/schema").User | undefined;
-    if (!user) return null;
-    const orgData = await getUserOrg(user.id);
-    if (!orgData) return null;
-    return getOrgCredIds(orgData.org.id);
+    const { creds } = await scopedCredsForUser(req);
+    if (creds.length === 0) return null;
+    return creds.map((c) => c.id);
   }
 
   async function isDemoOrg(req: any): Promise<boolean> {
@@ -2925,9 +2966,7 @@ export async function registerRoutes(
       if (isDemo) {
         await streamDemoInsightChat(sessionId, message.trim(), history, res);
       } else {
-        const creds = await db.select({ id: apmCredentials.id })
-          .from(apmCredentials)
-          .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
+        const { creds } = await scopedCredsForUser(req);
         const credIds = creds.map(c => c.id);
         await streamInsightChat(sessionId, message.trim(), credIds, orgData.org.name, history, res);
       }
@@ -4229,12 +4268,17 @@ export async function registerRoutes(
     const type = String(req.query.type ?? "");
     if (!entityId || entityId === "undefined") return res.json({ nodes: [], edges: [], summary: {} });
     try {
+      const scope = await scopedAppContextForUser(req, true);
+      if (scope.appExternalIdSet.size === 0) return res.json({ nodes: [], edges: [], summary: {} });
       const nodes: any[] = [];
       const edges: any[] = [];
       if (type === "incident" || entityId.startsWith("INC-") || entityId.startsWith("demo-inc-")) {
         const exId = entityId;
         const [inc] = await db.select().from(dbIncidents).where(eq(dbIncidents.externalId, exId));
         if (inc) {
+          if (!scope.appExternalIdSet.has(String(inc.applicationId ?? ""))) {
+            return res.json({ nodes: [], edges: [], summary: {} });
+          }
           nodes.push({ id: exId, type: "incident", label: inc.title.substring(0, 40), severity: inc.severity });
           const relErrors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, inc.applicationId)).limit(4);
           const relAlerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, inc.applicationId)).limit(4);
@@ -4245,6 +4289,9 @@ export async function registerRoutes(
         } else if (/^PRED-(.+)$/i.test(exId)) {
           const appLookupId = exId.replace(/^PRED-/i, "");
           const app = await resolveDbApp(appLookupId);
+          if (!app || !isScopedDbApp(scope, app)) {
+            return res.json({ nodes: [], edges: [], summary: {} });
+          }
           const appExternalId = app?.externalId ?? appLookupId;
           nodes.push({ id: exId, type: "incident", label: `Predicted incident ${exId}`, severity: "Warning" });
           const [relErrors, relAlerts, relServers] = await Promise.all([
@@ -4261,6 +4308,9 @@ export async function registerRoutes(
         if (!isNaN(numId)) {
           const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
           if (err) {
+            if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) {
+              return res.json({ nodes: [], edges: [], summary: {} });
+            }
             nodes.push({ id: entityId, type: "error", label: err.errorType ?? "Error", severity: err.severity });
             const relInc = await db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, err.applicationId ?? "")).limit(3);
             const relAlerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, err.applicationId ?? "")).limit(3);
@@ -4293,6 +4343,8 @@ export async function registerRoutes(
   app.get("/api/incidents/:incidentId/related", async (req, res) => {
     const { incidentId } = req.params;
     try {
+      const scope = await scopedAppContextForUser(req, true);
+      if (scope.appExternalIdSet.size === 0) return res.json({ alerts: [], errors: [], nodes: [] });
       const [inc] = await db.select().from(dbIncidents).where(eq(dbIncidents.externalId, incidentId));
       let appExternalId: string | null = inc?.applicationId ?? null;
       if (!appExternalId) {
@@ -4300,8 +4352,14 @@ export async function registerRoutes(
         if (predMatch) {
           const appLookupId = predMatch[1];
           const resolved = await resolveDbApp(appLookupId);
-          appExternalId = resolved?.externalId ?? appLookupId;
+          if (!resolved || !isScopedDbApp(scope, resolved)) {
+            return res.json({ alerts: [], errors: [], nodes: [] });
+          }
+          appExternalId = resolved.externalId ?? null;
         }
+      }
+      if (appExternalId && !scope.appExternalIdSet.has(String(appExternalId))) {
+        return res.json({ alerts: [], errors: [], nodes: [] });
       }
       if (!appExternalId) return res.json({ alerts: [], errors: [], nodes: [] });
       const [app] = await db.select({ id: dbApplications.id, name: dbApplications.name }).from(dbApplications).where(eq(dbApplications.externalId, appExternalId));
@@ -4382,9 +4440,12 @@ export async function registerRoutes(
   app.get("/api/errors/:errorId/related", async (req, res) => {
     const numId = parseInt(req.params.errorId.replace("ERR-", ""));
     try {
+      const scope = await scopedAppContextForUser(req, true);
+      if (scope.appExternalIdSet.size === 0) return res.json({ incidents: [], alerts: [], nodes: [] });
       if (isNaN(numId)) return res.json({ incidents: [], alerts: [], nodes: [] });
       const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
       if (!err) return res.json({ incidents: [], alerts: [], nodes: [] });
+      if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) return res.json({ incidents: [], alerts: [], nodes: [] });
       const incidents = await db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, err.applicationId ?? "")).limit(5);
       const alerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, err.applicationId ?? "")).limit(5);
       const nodes = await db.select().from(dbServers).where(eq(dbServers.applicationId, err.applicationId ?? "")).limit(5);
@@ -4398,8 +4459,11 @@ export async function registerRoutes(
   app.get("/api/nodes/:nodeId/related", async (req, res) => {
     const { nodeId } = req.params;
     try {
+      const scope = await scopedAppContextForUser(req, true);
+      if (scope.appExternalIdSet.size === 0) return res.json({ incidents: [], alerts: [], errors: [] });
       const [server] = await db.select().from(dbServers).where(eq(dbServers.externalId, nodeId));
       if (!server) return res.json({ incidents: [], alerts: [], errors: [] });
+      if (!scope.appExternalIdSet.has(String(server.applicationId ?? ""))) return res.json({ incidents: [], alerts: [], errors: [] });
       const incidents = await db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, server.applicationId ?? "")).limit(5);
       const alerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, server.applicationId ?? "")).limit(5);
       const nodeKeys = [
@@ -4700,9 +4764,32 @@ export async function registerRoutes(
 
     return res.json(allAlerts);
   });
-  app.get("/api/alerts/errors/correlated", async (req, res) => { res.json(await storage.getCorrelatedErrors(String(req.query.alertId))); });
+  app.get("/api/alerts/errors/correlated", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) return res.json([]);
+    const alertId = String(req.query.alertId ?? "");
+    if (alertId.startsWith("ALT-")) {
+      const numId = Number(alertId.slice(4));
+      const [a] = Number.isFinite(numId)
+        ? await db.select({ applicationId: dbAlerts.applicationId }).from(dbAlerts).where(eq(dbAlerts.id, numId)).limit(1)
+        : [null as any];
+      if (!a?.applicationId || !scope.appExternalIdSet.has(String(a.applicationId))) return res.json([]);
+    } else if (alertId.startsWith("INC-")) {
+      const numId = Number(alertId.slice(4));
+      const [i] = Number.isFinite(numId)
+        ? await db.select({ applicationId: dbIncidents.applicationId }).from(dbIncidents).where(eq(dbIncidents.id, numId)).limit(1)
+        : [null as any];
+      if (!i?.applicationId || !scope.appExternalIdSet.has(String(i.applicationId))) return res.json([]);
+    } else if (alertId.startsWith("PRED-ALT-")) {
+      const appId = Number(alertId.slice("PRED-ALT-".length));
+      if (!Number.isFinite(appId) || !scope.appIdSet.has(appId)) return res.json([]);
+    }
+    res.json(await storage.getCorrelatedErrors(alertId));
+  });
   app.get("/api/alerts/:alertId/ai-analysis", async (req, res) => {
     const { alertId } = req.params;
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) return res.status(404).json({ message: "Alert not found" });
     const now = Date.now();
     const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
     const normSeverity = (sev?: string | null) => {
@@ -4741,6 +4828,9 @@ export async function registerRoutes(
     if (Number.isFinite(parsedAlertId)) {
       const [a] = await db.select().from(dbAlerts).where(eq(dbAlerts.id, parsedAlertId));
       if (a) {
+        if (!scope.appExternalIdSet.has(String(a.applicationId ?? ""))) {
+          return res.status(404).json({ message: "Alert not found" });
+        }
         const md: any = a.metadata ?? {};
         alertMd = md;
         const mdHealthRuleName = String(md?.healthRuleName ?? "").trim();
@@ -4763,6 +4853,9 @@ export async function registerRoutes(
     } else if (Number.isFinite(parsedIncId)) {
       const [i] = await db.select().from(dbIncidents).where(eq(dbIncidents.id, parsedIncId));
       if (i) {
+        if (!scope.appExternalIdSet.has(String(i.applicationId ?? ""))) {
+          return res.status(404).json({ message: "Alert not found" });
+        }
         entity = i.title;
         healthRuleName = `Incident: ${i.title}`;
         severity = normSeverity(i.severity);
@@ -4776,6 +4869,9 @@ export async function registerRoutes(
     } else if (Number.isFinite(parsedPredAppId)) {
       const [app] = await db.select({ id: dbApplications.id, externalId: dbApplications.externalId, name: dbApplications.name })
         .from(dbApplications).where(eq(dbApplications.id, parsedPredAppId));
+      if (!app || !isScopedDbApp(scope, app)) {
+        return res.status(404).json({ message: "Alert not found" });
+      }
       appName = app?.name ?? "Application";
       appExternalId = app?.externalId ?? null;
       appInternalId = app?.id ?? null;
@@ -5643,7 +5739,16 @@ export async function registerRoutes(
     return res.json([]);
   });
   app.get("/api/errors/:errorId/ai-analysis", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) {
+      return res.json({ summary: "", rootCause: "", recommendations: [], confidence: 0 });
+    }
     if (String(req.params.errorId ?? "").startsWith("SNAP-")) {
+      const snap = String(req.params.errorId ?? "").match(/^SNAP-(\d+)-/);
+      const snapAppExternalId = String(snap?.[1] ?? "").trim();
+      if (!snapAppExternalId || !scope.appExternalIdSet.has(snapAppExternalId)) {
+        return res.json({ summary: "", rootCause: "", recommendations: [], confidence: 0 });
+      }
       const confidence = 0.84;
       const primaryRootCause = "Call-level AppDynamics snapshot indicates a request-path specific failure with concrete error evidence.";
       const suggestedActions = [
@@ -5669,6 +5774,9 @@ export async function registerRoutes(
     try {
       const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
       if (!err) return res.json({ summary: "", rootCause: "", recommendations: [], confidence: 0 });
+      if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) {
+        return res.json({ summary: "", rootCause: "", recommendations: [], confidence: 0 });
+      }
       const sev = err.severity ?? "Warning";
       const confidence = (sev === "Critical" ? 87 : 72) / 100;
       const primaryRootCause = `Root cause hypothesis: ${err.message ? err.message.substring(0, 180) : "resource exhaustion or configuration drift in affected service path"}.`;
@@ -5697,9 +5805,16 @@ export async function registerRoutes(
   });
 
   app.get("/api/errors/:errorId/correlated", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) {
+      return res.json({ linkedIncident: null, relatedAlerts: [], relatedIncidents: [], relatedErrors: [] });
+    }
     const snap = String(req.params.errorId ?? "").match(/^SNAP-(\d+)-(\d+)-(\d+)-(\d+)$/);
     if (snap) {
       const appExternalId = String(snap[1]);
+      if (!scope.appExternalIdSet.has(appExternalId)) {
+        return res.json({ linkedIncident: null, relatedAlerts: [], relatedIncidents: [], relatedErrors: [] });
+      }
       try {
         const [alerts, incidents] = await Promise.all([
           db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, appExternalId)).orderBy(desc(dbAlerts.triggeredAt)).limit(6),
@@ -5731,6 +5846,9 @@ export async function registerRoutes(
     try {
       const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
       if (!err) return res.json({ linkedIncident: null, relatedAlerts: [], relatedIncidents: [], relatedErrors: [] });
+      if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) {
+        return res.json({ linkedIncident: null, relatedAlerts: [], relatedIncidents: [], relatedErrors: [] });
+      }
       const [alerts, incidents] = await Promise.all([
         db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, err.applicationId ?? "")).orderBy(desc(dbAlerts.triggeredAt)).limit(6),
         db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, err.applicationId ?? "")).orderBy(desc(dbIncidents.startTime)).limit(6),
@@ -5764,7 +5882,12 @@ export async function registerRoutes(
   });
 
   app.get("/api/errors/:errorId/predictions", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) return res.json({});
     if (String(req.params.errorId ?? "").startsWith("SNAP-")) {
+      const snap = String(req.params.errorId ?? "").match(/^SNAP-(\d+)-/);
+      const snapAppExternalId = String(snap?.[1] ?? "").trim();
+      if (!snapAppExternalId || !scope.appExternalIdSet.has(snapAppExternalId)) return res.json({});
       const forecastCurve = Array.from({ length: 24 }).map((_, i) => {
         const predicted = Math.min(95, 35 + i * 1.8 + Math.random() * 4);
         return { hour: i, predicted, lower: Math.max(0, predicted - 8), upper: Math.min(100, predicted + 8) };
@@ -5782,6 +5905,7 @@ export async function registerRoutes(
     try {
       const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
       if (!err) return res.json({});
+      if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) return res.json({});
       const base = Number(err.frequency ?? 1);
       const inc = err.frequencyTrend === "increasing" ? 1.08 : err.frequencyTrend === "decreasing" ? 0.93 : 1.0;
       const sevBoost = (err.severity ?? "Warning") === "Critical" ? 18 : (err.severity ?? "Warning") === "High" ? 10 : 4;
@@ -5799,6 +5923,8 @@ export async function registerRoutes(
     } catch { return res.json({}); }
   });
   app.get("/api/errors/:errorId", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    if (scope.appExternalIdSet.size === 0) return res.status(404).json({ message: "Error not found" });
     const looksLikeId = (value: string | null | undefined) => {
       const v = String(value ?? "").trim();
       return v.length > 0 && /^\d+$/.test(v);
@@ -5815,12 +5941,18 @@ export async function registerRoutes(
     const snapMatch = String(req.params.errorId ?? "").match(/^SNAP-(\d+)-(\d+)-(\d+)-(\d+)$/);
     if (snapMatch) {
       const appExternalNum = Number(snapMatch[1]);
+      if (!scope.appExternalIdSet.has(String(appExternalNum))) {
+        return res.status(404).json({ message: "Error not found" });
+      }
       const btId = Number(snapMatch[2]);
       const ts = Number(snapMatch[3]);
       const idx = Number(snapMatch[4]);
       if (Number.isFinite(appExternalNum) && Number.isFinite(btId) && Number.isFinite(ts)) {
         try {
           const [appRow] = await db.select().from(dbApplications).where(eq(dbApplications.externalId, String(appExternalNum))).limit(1);
+          if (!appRow || !isScopedDbApp(scope, appRow)) {
+            return res.status(404).json({ message: "Error not found" });
+          }
           if (appRow?.credentialId != null && appRow.source === "appdynamics") {
             const [cred] = await db.select().from(apmCredentials).where(eq(apmCredentials.id, appRow.credentialId)).limit(1);
             if (cred) {
@@ -5976,6 +6108,7 @@ export async function registerRoutes(
     try {
       const [err] = await db.select().from(dbErrors).where(eq(dbErrors.id, numId));
       if (!err) return res.status(404).json({ message: "Error not found" });
+      if (!scope.appExternalIdSet.has(String(err.applicationId ?? ""))) return res.status(404).json({ message: "Error not found" });
       const [app] = await db.select({ name: dbApplications.name }).from(dbApplications).where(eq(dbApplications.externalId, err.applicationId ?? ""));
       const now = Date.now();
       const firstMs = err.firstSeen?.getTime() ?? now - 86400000;
@@ -6155,35 +6288,16 @@ export async function registerRoutes(
   // === Incidents List (org-scoped) ===
   app.get("/api/incidents", async (req, res) => {
     try {
-      const user = req.user as import("@shared/schema").User | undefined;
-      let credIds: number[] = [];
-      if (user) {
-        const orgData = await getUserOrg(user.id);
-        if (orgData) {
-          const orgCreds = await db.select({ id: apmCredentials.id })
-            .from(apmCredentials)
-            .where(and(eq(apmCredentials.organizationId, orgData.org.id), eq(apmCredentials.isActive, true)));
-          credIds = orgCreds.map((c) => c.id);
-        }
-      }
-      // Fallback for sessions where app-scoped pages still work without auth context.
-      if (credIds.length === 0) {
-        const activeCreds = await db.select({ id: apmCredentials.id })
-          .from(apmCredentials)
-          .where(eq(apmCredentials.isActive, true));
-        credIds = activeCreds.map((c) => c.id);
-      }
+      const scope = await scopedAppContextForUser(req);
+      const credIds = Array.from(scope.credIdSet);
       if (credIds.length === 0) return res.json([]);
 
-      const scopedApps = await db.select({
-        externalId: dbApplications.externalId,
-        id: dbApplications.id,
-        name: dbApplications.name,
-        source: dbApplications.source,
-      }).from(dbApplications)
-        .where(credIds.length === 1
-          ? eq(dbApplications.credentialId, credIds[0])
-          : sql`${dbApplications.credentialId} = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[])`);
+      const scopedApps = scope.apps.map((a) => ({
+        externalId: a.externalId,
+        id: a.id,
+        name: a.name,
+        source: a.source,
+      }));
       if (scopedApps.length === 0) return res.json([]);
 
       // Keep global incidents aligned with app pages by matching only current active apps.
@@ -6269,9 +6383,15 @@ export async function registerRoutes(
   app.get("/api/incidents/:incidentId", async (req, res) => {
     const { incidentId } = req.params;
     try {
+      const scope = await scopedAppContextForUser(req, true);
+      if (scope.appExternalIdSet.size === 0) return res.status(404).json({ message: "Incident not found" });
+
       // Try DB first (handles showcase IDs like SC-INC-001)
       const [dbInc] = await db.select().from(dbIncidents).where(eq(dbIncidents.externalId, incidentId));
       if (dbInc) {
+        if (!scope.appExternalIdSet.has(String(dbInc.applicationId ?? ""))) {
+          return res.status(404).json({ message: "Incident not found" });
+        }
         const now = Date.now();
         const sev = dbInc.severity ?? "Warning";
         const relatedAlerts = await db.select().from(dbAlerts)
@@ -6325,8 +6445,8 @@ export async function registerRoutes(
           + (dbInc.status === "Resolved" ? -4 : 2)
           + (dbInc.rootCause ? 2 : 0);
         const confidence = Math.max(55, Math.min(96, Math.round(confidenceRaw)));
-        const user = req.user as import("@shared/schema").User | undefined;
-        const orgData = user ? await getUserOrg(user.id) : null;
+        const user = scope.user as import("@shared/schema").User | undefined;
+        const orgData = scope.orgData;
         const orgId = orgData?.org?.id ?? null;
         const noteQuery = db.select().from(incidentNotes).where(orgId != null
           ? and(eq(incidentNotes.incidentId, dbInc.externalId), eq(incidentNotes.organizationId, orgId))
@@ -6498,6 +6618,9 @@ export async function registerRoutes(
       if (predMatch) {
         const appLookupId = predMatch[1];
         const app = await resolveDbApp(appLookupId);
+        if (!app || !isScopedDbApp(scope, app)) {
+          return res.status(404).json({ message: "Incident not found" });
+        }
         const now = Date.now();
 
         const appExternalId = app?.externalId ?? appLookupId;
@@ -6549,8 +6672,8 @@ export async function registerRoutes(
           + Math.min(12, txStress * 2)
           + Math.min(6, openIncidents.length * 2);
         const confidence = Math.min(95, Math.max(60, Math.round(predictedConfidenceRaw)));
-        const user = req.user as import("@shared/schema").User | undefined;
-        const orgData = user ? await getUserOrg(user.id) : null;
+        const user = scope.user as import("@shared/schema").User | undefined;
+        const orgData = scope.orgData;
         const orgId = orgData?.org?.id ?? null;
         const predNotes = await db.select().from(incidentNotes).where(orgId != null
           ? and(eq(incidentNotes.incidentId, incidentId), eq(incidentNotes.organizationId, orgId))
@@ -6722,9 +6845,24 @@ export async function registerRoutes(
       if (!incidentId) return res.status(400).json({ error: "incidentId is required" });
       if (!content) return res.status(400).json({ error: "content is required" });
 
-      const user = req.user as import("@shared/schema").User | undefined;
-      const orgData = user ? await getUserOrg(user.id) : null;
+      const scope = await scopedAppContextForUser(req, true);
+      const user = scope.user as import("@shared/schema").User | undefined;
+      const orgData = scope.orgData;
       const orgId = orgData?.org?.id ?? null;
+      if (scope.appExternalIdSet.size === 0) return res.status(403).json({ error: "Not authorized for this incident" });
+
+      let noteAllowed = false;
+      const [dbInc] = await db.select({ applicationId: dbIncidents.applicationId }).from(dbIncidents).where(eq(dbIncidents.externalId, incidentId)).limit(1);
+      if (dbInc?.applicationId && scope.appExternalIdSet.has(String(dbInc.applicationId))) {
+        noteAllowed = true;
+      } else {
+        const predMatch = /^PRED-(.+)$/i.exec(incidentId);
+        if (predMatch) {
+          const resolved = await resolveDbApp(predMatch[1]);
+          noteAllowed = !!(resolved && isScopedDbApp(scope, resolved));
+        }
+      }
+      if (!noteAllowed) return res.status(403).json({ error: "Not authorized for this incident" });
       const tagMatches = content.match(/#[a-zA-Z0-9_-]+/g) ?? [];
       const inferredTags = Array.from(new Set(tagMatches.map((t) => t.replace(/^#/, "")))).slice(0, 8);
       const suppliedTags = Array.isArray(req.body?.tags)
@@ -6763,8 +6901,9 @@ export async function registerRoutes(
 
   // === Rich App Data ===
   app.get("/api/applications/:id/rich", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
     const dbApp = await resolveDbApp(req.params.id);
-    if (!dbApp) return res.json(await storage.getApplicationRichData(Number(req.params.id)));
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Application not found" });
     const [incRows, alertRows, errRows, srvRows] = await Promise.all([
       db.select().from(dbIncidents).where(eq(dbIncidents.applicationId, dbApp.externalId)).limit(100),
       db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, dbApp.externalId)).limit(100),
@@ -6799,8 +6938,9 @@ export async function registerRoutes(
     });
   });
   app.get("/api/applications/:id/service-risks", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
     const dbApp = await resolveDbApp(req.params.id);
-    if (!dbApp) return res.json(await storage.getServiceRiskRankings(Number(req.params.id)));
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Application not found" });
     const tx = await db.select().from(dbTransactions).where(eq(dbTransactions.applicationId, dbApp.externalId)).limit(30);
     const risks = tx.map((t, idx) => {
       const errorRate = Number(t.errorRate ?? 0);
@@ -6829,8 +6969,9 @@ export async function registerRoutes(
     res.json(risks);
   });
   app.get("/api/applications/:id/http-errors", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
     const dbApp = await resolveDbApp(req.params.id);
-    if (!dbApp) return res.json(await storage.getHttpErrorCategories(Number(req.params.id)));
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Application not found" });
     const errors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, dbApp.externalId)).limit(200);
     const buckets = new Map<string, number>();
     for (const e of errors) {
@@ -6850,8 +6991,9 @@ export async function registerRoutes(
     res.json(out);
   });
   app.get("/api/applications/:id/dependency-errors", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
     const dbApp = await resolveDbApp(req.params.id);
-    if (!dbApp) return res.json(await storage.getDependencyErrors(Number(req.params.id)));
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Application not found" });
     const errors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, dbApp.externalId)).limit(200);
     const buckets = new Map<string, number>();
     for (const e of errors) {
@@ -6872,7 +7014,9 @@ export async function registerRoutes(
   });
   // === Servers ===
   app.get("/api/applications/:id/servers", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
     const dbApp = await resolveDbApp(req.params.id);
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.json([]);
     if (dbApp?.externalId) {
       const servers = await db.select().from(dbServers).where(eq(dbServers.applicationId, dbApp.externalId)).limit(50);
       const liveAppdMetrics = dbApp.source === "appdynamics"
@@ -6891,9 +7035,14 @@ export async function registerRoutes(
     return res.json([]);
   });
   app.get("/api/applications/:id/servers/:serverId", async (req, res) => {
+    const scope = await scopedAppContextForUser(req, true);
+    const dbApp = await resolveDbApp(req.params.id);
+    if (!dbApp || !isScopedDbApp(scope, dbApp)) return res.status(404).json({ message: "Server not found" });
     const [row] = await db.select().from(dbServers).where(eq(dbServers.id, Number(req.params.serverId)));
     if (!row) return res.status(404).json({ message: "Server not found" });
-    const dbApp = await resolveDbApp(req.params.id);
+    if (String(row.applicationId ?? "") !== String(dbApp.externalId ?? "")) {
+      return res.status(404).json({ message: "Server not found" });
+    }
     const liveAppdMetrics = dbApp?.source === "appdynamics" && dbApp.externalId
       ? await getLiveAppdNodeMetrics(dbApp.externalId, dbApp.credentialId)
       : null;
@@ -7245,8 +7394,12 @@ export async function registerRoutes(
   // === APM Sync & Credentials ===
 
   // Sync status overview
-  app.get("/api/apm/sync/status", async (_req, res) => {
-    try { res.json(await getSyncStatus()); }
+  app.get("/api/apm/sync/status", requireAuth, async (req, res) => {
+    try {
+      const { creds } = await scopedCredsForUser(req, true);
+      const credIds = creds.map((c) => c.id);
+      res.json(await getSyncStatus(credIds));
+    }
     catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
