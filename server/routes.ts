@@ -22,7 +22,7 @@ import {
   DEMO_RECOMMENDATIONS, DEMO_SERVICE_RISK_RANKING,
 } from "./services/ai-demo-data";
 import {
-  streamInsightChat, streamDemoInsightChat,
+  streamInsightChat,
 } from "./services/insightNavigator.service";
 import {
   insightNavSessions, insightNavMessages,
@@ -2907,7 +2907,7 @@ export async function registerRoutes(
   app.delete("/api/insight-navigator/sessions/:sessionId", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const sessionId = parseInt(req.params.sessionId);
+      const sessionId = Number(String(req.params.sessionId));
       const [session] = await db.select().from(insightNavSessions)
         .where(and(eq(insightNavSessions.id, sessionId), eq(insightNavSessions.userId, user.id)));
       if (!session) return res.status(404).json({ error: "Session not found" });
@@ -2921,7 +2921,7 @@ export async function registerRoutes(
   app.get("/api/insight-navigator/sessions/:sessionId/messages", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const sessionId = parseInt(req.params.sessionId);
+      const sessionId = Number(String(req.params.sessionId));
       const [session] = await db.select().from(insightNavSessions)
         .where(and(eq(insightNavSessions.id, sessionId), eq(insightNavSessions.userId, user.id)));
       if (!session) return res.status(404).json({ error: "Session not found" });
@@ -2936,7 +2936,7 @@ export async function registerRoutes(
   app.post("/api/insight-navigator/sessions/:sessionId/messages", requireAuth, async (req, res) => {
     try {
       const user = req.user as any;
-      const sessionId = parseInt(req.params.sessionId);
+      const sessionId = Number(String(req.params.sessionId));
       const { message } = req.body as { message: string };
 
       if (!message?.trim()) return res.status(400).json({ error: "Message required" });
@@ -2950,7 +2950,11 @@ export async function registerRoutes(
       await db.insert(insightNavMessages).values({ sessionId, role: "user", content: message.trim() });
 
       // Fetch conversation history for context
-      const historyRows = await db.select({ role: insightNavMessages.role, content: insightNavMessages.content })
+      const historyRows = await db.select({
+        role: insightNavMessages.role,
+        content: insightNavMessages.content,
+        structuredData: insightNavMessages.structuredData,
+      })
         .from(insightNavMessages)
         .where(and(eq(insightNavMessages.sessionId, sessionId), sql`${insightNavMessages.role} != 'system'`))
         .orderBy(insightNavMessages.createdAt)
@@ -2961,15 +2965,9 @@ export async function registerRoutes(
       const orgData = await getUserOrg(user.id);
       if (!orgData) return res.status(400).json({ error: "No organisation" });
 
-      const isDemo = orgData.org.slug === "perviewsis-demo";
-
-      if (isDemo) {
-        await streamDemoInsightChat(sessionId, message.trim(), history, res);
-      } else {
-        const { creds } = await scopedCredsForUser(req);
-        const credIds = creds.map(c => c.id);
-        await streamInsightChat(sessionId, message.trim(), credIds, orgData.org.name, history, res);
-      }
+      const { creds } = await scopedCredsForUser(req);
+      const credIds = creds.map(c => c.id);
+      await streamInsightChat(sessionId, message.trim(), credIds, orgData.org.name, history, res);
     } catch (err: any) {
       if (!res.headersSent) res.status(500).json({ error: err.message });
     }

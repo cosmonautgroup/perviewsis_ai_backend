@@ -63,7 +63,7 @@ export function parseAIJson(raw: string): any {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-export const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2";
+export const DEFAULT_MODEL = process.env.OLLAMA_MODEL ?? "llama3";
 
 export function systemPrompt(): string {
   return (

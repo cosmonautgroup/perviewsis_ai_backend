@@ -1,7 +1,7 @@
 import { db } from "../db";
 import {
   dbApplications, dbIncidents, dbAlerts, dbErrors, dbServers, dbCapacityRisks,
-  apmCredentials, insightNavMessages, insightNavSessions,
+  dbTransactions, dbMetrics, insightNavMessages, insightNavSessions,
 } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
 import { ollamaClient, DEFAULT_MODEL, parseAIJson } from "./ollama.service";
@@ -32,16 +32,53 @@ export interface HistoryEntry {
 
 // ─── Context builder ──────────────────────────────────────────────────────────
 
-export async function buildOrgContext(credIds: number[], orgName: string): Promise<string> {
-  if (!credIds.length) return "No APM credentials configured for this organisation.";
+function uniqueTerms(input: string): string[] {
+  return Array.from(new Set(input
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, " ")
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3)
+    .filter(t => !["what", "which", "show", "give", "with", "from", "this", "that", "have", "about", "please", "current", "latest"].includes(t)))).slice(0, 6);
+}
 
-  const credIdArr = credIds.length === 1
+function orLike(terms: string[], columns: any[]) {
+  if (!terms.length) return sql`false`;
+  const clauses = terms.flatMap(term => {
+    const pattern = `%${term}%`;
+    return columns.map(col => sql`lower(coalesce(${col}, '')) LIKE ${pattern}`);
+  });
+  return sql.join(clauses, sql` OR `);
+}
+
+function scopedCredentialWhere(credIds: number[]) {
+  if (!credIds.length) return sql`true`;
+  return credIds.length === 1
     ? sql`credential_id = ${credIds[0]}`
     : sql`credential_id = ANY(ARRAY[${sql.join(credIds.map(id => sql`${id}`), sql`, `)}]::integer[])`;
+}
+
+async function hasScopedApplications(credIds: number[]): Promise<boolean> {
+  if (!credIds.length) return false;
+  const credWhere = scopedCredentialWhere(credIds);
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(dbApplications).where(credWhere as any);
+  return Number(row?.count ?? 0) > 0;
+}
+
+export async function buildOrgContext(credIds: number[], orgName: string, userMessage = ""): Promise<string> {
+  const useCredentialScope = await hasScopedApplications(credIds);
+  const credIdArr = useCredentialScope ? scopedCredentialWhere(credIds) : sql`true`;
+  const scopeNote = useCredentialScope
+    ? `Scoped to ${credIds.length} active credential${credIds.length === 1 ? "" : "s"} for this user.`
+    : "Using all restored APM database records because no active user-owned credential has matching application rows.";
 
   const [apps, incidents, alerts, errors, servers, risks] = await Promise.all([
-    db.select({ id: dbApplications.id, externalId: dbApplications.externalId, name: dbApplications.name, status: dbApplications.status, source: dbApplications.source })
-      .from(dbApplications).where(credIdArr as any).orderBy(dbApplications.name).limit(15),
+    db.select({
+      id: dbApplications.id, externalId: dbApplications.externalId, name: dbApplications.name,
+      status: dbApplications.status, source: dbApplications.source, callsPerMinute: dbApplications.callsPerMinute,
+      avgResponseTime: dbApplications.avgResponseTime, errorRate: dbApplications.errorRate, healthScore: dbApplications.healthScore,
+    })
+      .from(dbApplications).where(credIdArr as any).orderBy(desc(dbApplications.healthRuleViolations)).limit(20),
 
     db.select({ id: dbIncidents.id, title: dbIncidents.title, severity: dbIncidents.severity, status: dbIncidents.status,
       startTime: dbIncidents.startTime, rootCause: dbIncidents.rootCause,
@@ -79,11 +116,62 @@ export async function buildOrgContext(credIds: number[], orgName: string): Promi
       .orderBy(desc(dbCapacityRisks.riskScore)).limit(8),
   ]);
 
-  const lines: string[] = [`Organisation: ${orgName}`];
+  const terms = uniqueTerms(userMessage);
+  const [matchedApps, matchedIncidents, matchedAlerts, matchedErrors, matchedTransactions, topMetrics] = await Promise.all([
+    db.select({
+      id: dbApplications.id, externalId: dbApplications.externalId, name: dbApplications.name,
+      status: dbApplications.status, avgResponseTime: dbApplications.avgResponseTime,
+      callsPerMinute: dbApplications.callsPerMinute, errorRate: dbApplications.errorRate,
+    })
+      .from(dbApplications)
+      .where(and(credIdArr as any, orLike(terms, [dbApplications.name, dbApplications.externalId, dbApplications.status]) as any))
+      .limit(8),
+    db.select({ id: dbIncidents.id, title: dbIncidents.title, severity: dbIncidents.severity, status: dbIncidents.status, rootCause: dbIncidents.rootCause })
+      .from(dbIncidents)
+      .where(and(sql`${dbIncidents.applicationId} IN (SELECT external_id FROM apm_applications WHERE ${credIdArr})`, orLike(terms, [dbIncidents.title, dbIncidents.severity, dbIncidents.status, dbIncidents.rootCause]) as any))
+      .orderBy(desc(dbIncidents.startTime)).limit(8),
+    db.select({ id: dbAlerts.id, name: dbAlerts.name, severity: dbAlerts.severity, status: dbAlerts.status, metric: dbAlerts.metric, currentValue: dbAlerts.currentValue, threshold: dbAlerts.threshold })
+      .from(dbAlerts)
+      .where(and(sql`${dbAlerts.applicationId} IN (SELECT external_id FROM apm_applications WHERE ${credIdArr})`, orLike(terms, [dbAlerts.name, dbAlerts.severity, dbAlerts.status, dbAlerts.metric]) as any))
+      .orderBy(desc(dbAlerts.triggeredAt)).limit(8),
+    db.select({ id: dbErrors.id, errorType: dbErrors.errorType, service: dbErrors.service, message: dbErrors.message, severity: dbErrors.severity, frequency: dbErrors.frequency, status: dbErrors.status })
+      .from(dbErrors)
+      .where(and(sql`${dbErrors.applicationId} IN (SELECT external_id FROM apm_applications WHERE ${credIdArr})`, orLike(terms, [dbErrors.errorType, dbErrors.service, dbErrors.message, dbErrors.severity, dbErrors.status]) as any))
+      .orderBy(desc(dbErrors.frequency)).limit(8),
+    db.select({
+      id: dbTransactions.id, name: dbTransactions.name, tier: dbTransactions.tier,
+      avgResponseTime: dbTransactions.avgResponseTime, callsPerMinute: dbTransactions.callsPerMinute,
+      errorRate: dbTransactions.errorRate, status: dbTransactions.status,
+    })
+      .from(dbTransactions)
+      .where(and(credIdArr as any, orLike(terms, [dbTransactions.name, dbTransactions.tier, dbTransactions.status]) as any))
+      .orderBy(desc(dbTransactions.errorRate)).limit(8),
+    db.select({
+      entityId: dbMetrics.entityId, entityType: dbMetrics.entityType, metricName: dbMetrics.metricName,
+      value: dbMetrics.value, recordedAt: dbMetrics.recordedAt,
+    })
+      .from(dbMetrics)
+      .where(and(credIdArr as any, orLike(terms, [dbMetrics.entityId, dbMetrics.entityType, dbMetrics.metricName]) as any))
+      .orderBy(desc(dbMetrics.recordedAt)).limit(12),
+  ]);
+
+  const lines: string[] = [
+    `Organisation: ${orgName}`,
+    `Model: ${DEFAULT_MODEL}`,
+    `Database scope: ${scopeNote}`,
+  ];
 
   if (apps.length) {
     lines.push(`\nApplications (${apps.length}):`);
-    apps.forEach(a => lines.push(`  - [ID:${a.id}] ${a.name} [${a.status ?? "Unknown"}, ${a.source}]`));
+    apps.forEach(a => {
+      const perf = [
+        a.healthScore != null ? `health: ${a.healthScore}` : "",
+        a.callsPerMinute != null ? `calls/min: ${a.callsPerMinute}` : "",
+        a.avgResponseTime != null ? `avgRT: ${a.avgResponseTime}ms` : "",
+        a.errorRate != null ? `errorRate: ${a.errorRate}%` : "",
+      ].filter(Boolean).join(", ");
+      lines.push(`  - [ID:${a.id}] ${a.name} [${a.status ?? "Unknown"}, ${a.source}]${perf ? ` | ${perf}` : ""}`);
+    });
   }
 
   if (incidents.length) {
@@ -127,6 +215,16 @@ export async function buildOrgContext(credIds: number[], orgName: string): Promi
     });
   }
 
+  if (matchedApps.length || matchedIncidents.length || matchedAlerts.length || matchedErrors.length || matchedTransactions.length || topMetrics.length) {
+    lines.push(`\nQuery-Specific Database Matches for "${userMessage.substring(0, 140)}":`);
+    matchedApps.forEach(a => lines.push(`  - App [ID:${a.id}] ${a.name} | ${a.status} | avgRT:${a.avgResponseTime ?? "n/a"}ms | err:${a.errorRate ?? "n/a"}% | cpm:${a.callsPerMinute ?? "n/a"}`));
+    matchedIncidents.forEach(i => lines.push(`  - Incident [ID:${i.id}] [${i.severity}] ${i.title} | ${i.status}${i.rootCause ? ` | cause: ${String(i.rootCause).substring(0, 90)}` : ""}`));
+    matchedAlerts.forEach(a => lines.push(`  - Alert [ID:${a.id}] [${a.severity}] ${a.name} | ${a.status} | ${a.metric ?? "metric"}=${a.currentValue ?? "n/a"} threshold=${a.threshold ?? "n/a"}`));
+    matchedErrors.forEach(e => lines.push(`  - Error [ID:${e.id}] [${e.severity ?? "Unknown"}] ${e.errorType ?? "Error"} in ${e.service ?? "unknown"} | count:${e.frequency ?? 0} | ${String(e.message ?? "").substring(0, 90)}`));
+    matchedTransactions.forEach(t => lines.push(`  - Transaction [ID:${t.id}] ${t.name} | ${t.status ?? "Unknown"} | avgRT:${t.avgResponseTime ?? "n/a"}ms | err:${t.errorRate ?? "n/a"}% | cpm:${t.callsPerMinute ?? "n/a"}`));
+    topMetrics.forEach(m => lines.push(`  - Metric ${m.metricName} for ${m.entityType}:${m.entityId} | value:${m.value ?? "n/a"} at ${m.recordedAt}`));
+  }
+
   return lines.join("\n");
 }
 
@@ -148,10 +246,10 @@ export function buildSessionMemory(history: HistoryEntry[]): string {
   }
 
   const parts: string[] = [];
-  if (seenIncidents.size) parts.push(`Incidents discussed: ${[...seenIncidents.entries()].map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
-  if (seenAlerts.size) parts.push(`Alerts discussed: ${[...seenAlerts.entries()].map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
-  if (seenErrors.size) parts.push(`Errors discussed: ${[...seenErrors.entries()].map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
-  if (seenServers.size) parts.push(`Servers discussed: ${[...seenServers.entries()].map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
+  if (seenIncidents.size) parts.push(`Incidents discussed: ${Array.from(seenIncidents.entries()).map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
+  if (seenAlerts.size) parts.push(`Alerts discussed: ${Array.from(seenAlerts.entries()).map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
+  if (seenErrors.size) parts.push(`Errors discussed: ${Array.from(seenErrors.entries()).map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
+  if (seenServers.size) parts.push(`Servers discussed: ${Array.from(seenServers.entries()).map(([id, t]) => `${t} (ID:${id})`).join(", ")}`);
 
   return parts.length ? parts.join("\n") : "";
 }
@@ -164,14 +262,15 @@ export function buildSystemPrompt(orgName: string, context: string, sessionMemor
     : "";
 
   return `You are ObservaIQ Insight Navigator AI, an expert enterprise observability assistant for ${orgName}.
-You have access to live telemetry data from AppDynamics and Dynatrace. Answer the user's questions using the context below.
+You answer user questions by reasoning over PostgreSQL database context from AppDynamics and Dynatrace telemetry. The database context is authoritative.
 
 CURRENT TELEMETRY CONTEXT:
 ${context}
 ${memSection}
 RESPONSE RULES:
 - Always respond with a single valid JSON object (no markdown, no code blocks, no text outside the JSON).
-- If the user asks a question that cannot be answered from the context, say so clearly in answerText.
+- Answer the user's exact query using the database context. If query-specific matches exist, prioritize them over generic summary rows.
+- If the user asks a question that cannot be answered from the database context, say so clearly in answerText and suggest the closest dashboard to inspect.
 - Never expose credentials, API keys, passwords, or internal infrastructure details beyond what's in the context.
 - Keep answerText concise but thorough (3-8 sentences). Use bullet points with \\n characters if listing items.
 - Include specific metrics, incident names, service names from the context when relevant.
@@ -317,7 +416,7 @@ export async function streamInsightChat(
   history: HistoryEntry[],
   res: Response,
 ): Promise<void> {
-  const context = await buildOrgContext(credIds, orgName);
+  const context = await buildOrgContext(credIds, orgName, userMessage);
   const sessionMemory = buildSessionMemory(history);
   const systemMsg = buildSystemPrompt(orgName, context, sessionMemory);
 
@@ -749,7 +848,7 @@ function matchDemoResponse(question: string, history: HistoryEntry[]): any {
   }
 
   const contextNote = prevEntities.length
-    ? `\n\nBased on our conversation, we've been discussing: ${[...new Set(prevEntities)].filter(Boolean).slice(0, 4).join(", ")}.`
+    ? `\n\nBased on our conversation, we've been discussing: ${Array.from(new Set(prevEntities)).filter(Boolean).slice(0, 4).join(", ")}.`
     : "";
 
   return {
