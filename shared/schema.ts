@@ -111,9 +111,18 @@ export type ConnectionConfig = z.infer<typeof connectionSchema>;
 
 export const applicationSchema = z.object({
   id: z.number(),
+  externalId: z.string().nullable().optional(),
   name: z.string(),
   status: z.enum(["Healthy", "Warning", "Critical"]),
+  source: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  tier: z.string().nullable().optional(),
+  callsPerMinute: z.number().nullable().optional(),
+  avgResponseTime: z.number().nullable().optional(),
+  errorRate: z.number().nullable().optional(),
+  healthScore: z.number().nullable().optional(),
   healthRuleViolations: z.number(),
+  lastSyncAt: z.union([z.string(), z.date()]).nullable().optional(),
 });
 export type Application = z.infer<typeof applicationSchema>;
 

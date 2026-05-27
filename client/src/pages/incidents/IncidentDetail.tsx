@@ -47,28 +47,35 @@ const CAUSAL_COLORS: Record<string, string> = {
 
 function MetricMiniChart({ data, color, label, unit }: { data: any[]; color: string; label: string; unit: string }) {
   const incidentStart = data.find(d => d.anomaly)?.timestamp;
+  const hasData = Array.isArray(data) && data.length > 0;
   return (
     <Card className="border border-border shadow-sm">
       <CardHeader className="pb-1 pt-4 px-4">
         <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{label}</CardTitle>
       </CardHeader>
       <CardContent className="px-2 pb-4 h-[130px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 5, right: 5, left: -30, bottom: 0 }}>
-            <defs>
-              <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
-                <stop offset="95%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-            <XAxis dataKey="timestamp" tickFormatter={fmtTime} stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} interval={8} />
-            <YAxis stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} />
-            <Tooltip labelFormatter={v => fmtTime(v)} formatter={(v: any) => [`${Number(v).toFixed(1)}${unit}`]} />
-            {incidentStart && <ReferenceLine x={incidentStart} stroke="#ef4444" strokeDasharray="4 2" strokeWidth={1.5} />}
-            <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#grad-${label})`} dot={false} />
-          </AreaChart>
-        </ResponsiveContainer>
+        {hasData ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 5, right: 5, left: -30, bottom: 0 }}>
+              <defs>
+                <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+              <XAxis dataKey="timestamp" tickFormatter={fmtTime} stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} interval={8} />
+              <YAxis stroke="hsl(var(--muted-foreground))" fontSize={9} tickLine={false} axisLine={false} />
+              <Tooltip labelFormatter={v => fmtTime(v)} formatter={(v: any) => [`${Number(v).toFixed(1)}${unit}`]} />
+              {incidentStart && <ReferenceLine x={incidentStart} stroke="#ef4444" strokeDasharray="4 2" strokeWidth={1.5} />}
+              <Area type="monotone" dataKey="value" stroke={color} strokeWidth={1.5} fill={`url(#grad-${label})`} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-full flex items-center justify-center text-[10px] text-muted-foreground px-4 text-center">
+            No incident-scoped metric data
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -104,6 +111,67 @@ const CATEGORY_ICON: Record<string, any> = {
   App: <Activity className="w-3.5 h-3.5" />,
   Service: <Zap className="w-3.5 h-3.5" />,
 };
+
+const DRILLDOWN_SECTIONS: Array<{ key: string; label: string; icon: any; tone: string }> = [
+  { key: "alerts", label: "Alerts", icon: AlertTriangle, tone: "text-amber-400 border-amber-500/20 bg-amber-500/5" },
+  { key: "errors", label: "Errors", icon: Flame, tone: "text-orange-400 border-orange-500/20 bg-orange-500/5" },
+  { key: "server_metrics", label: "Server Metrics", icon: Server, tone: "text-blue-400 border-blue-500/20 bg-blue-500/5" },
+  { key: "application_metrics", label: "Application Metrics", icon: Activity, tone: "text-indigo-400 border-indigo-500/20 bg-indigo-500/5" },
+  { key: "business_transactions", label: "Business Transactions", icon: Zap, tone: "text-green-400 border-green-500/20 bg-green-500/5" },
+];
+
+function asRows(value: any): any[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function briefSignalText(value: any): string {
+  if (value == null) return "No details";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const title = value.title ?? value.name ?? value.message ?? value.event ?? value.metricName ?? value.metric_id ?? value.id ?? value.externalId;
+  const detail = value.timestamp ?? value.triggeredAt ?? value.startTime ?? value.service ?? value.applicationName ?? value.value ?? value.status;
+  return [title, detail].filter(Boolean).join(" · ") || JSON.stringify(value).slice(0, 180);
+}
+
+function DrilldownContextPanel({ context }: { context: any }) {
+  const hasContext = DRILLDOWN_SECTIONS.some((section) => asRows(context?.[section.key]).length > 0);
+  if (!hasContext) return null;
+
+  return (
+    <Card className="border border-border shadow-sm">
+      <CardHeader className="pb-3 border-b border-border">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Database className="w-4 h-4 text-indigo-400" /> Ollama Drilldown Context
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {DRILLDOWN_SECTIONS.map((section) => {
+          const rows = asRows(context?.[section.key]).slice(0, 5);
+          if (rows.length === 0) return null;
+          const Icon = section.icon;
+          return (
+            <div key={section.key} className={`rounded-xl border p-3 ${section.tone}`}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Icon className="w-3.5 h-3.5" />
+                  <p className="text-xs font-bold text-foreground">{section.label}</p>
+                </div>
+                <Badge className="text-[10px] bg-background/50 border-border">{rows.length}</Badge>
+              </div>
+              <div className="space-y-1.5">
+                {rows.map((row, i) => (
+                  <div key={i} className="rounded-lg bg-background/50 border border-border px-3 py-2">
+                    <p className="text-xs text-foreground line-clamp-2">{briefSignalText(row)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function IncidentDetail() {
   const { incidentId } = useParams<{ incidentId: string }>();
@@ -179,9 +247,11 @@ export default function IncidentDetail() {
               <h1 className="text-2xl font-bold text-foreground">{inc?.title}</h1>
             </div>
             <div className="flex items-center gap-2">
-              <Button data-testid="btn-remediate" variant="outline" size="sm" className="text-indigo-400 border-indigo-500/30" onClick={() => setShowRemediationPreview(v => !v)}>
-                <Play className="w-3.5 h-3.5 mr-1.5" /> Execute Remediation
-              </Button>
+              {inc?.autoRemediation?.available && (
+                <Button data-testid="btn-remediate" variant="outline" size="sm" className="text-indigo-400 border-indigo-500/30" onClick={() => setShowRemediationPreview(v => !v)}>
+                  <Play className="w-3.5 h-3.5 mr-1.5" /> Execute Remediation
+                </Button>
+              )}
               <Button variant="outline" size="sm" className="text-muted-foreground">
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh
               </Button>
@@ -190,17 +260,34 @@ export default function IncidentDetail() {
 
           {/* KPI grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-3">
-            {[
+            {([
               { label: "Duration", value: inc?.duration, icon: <Clock className="w-4 h-4 text-muted-foreground" />, unit: "" },
               { label: "AI Confidence", value: `${inc?.confidenceScore}%`, icon: <BrainCircuit className="w-4 h-4 text-indigo-400" />, highlight: true },
               { label: "Start Time", value: inc?.startTime ? formatDistanceToNow(new Date(inc.startTime), { addSuffix: true }) : "—", icon: <Clock className="w-4 h-4 text-muted-foreground" /> },
-            ].map(m => (
+            ] as Array<{ label: string; value: any; icon: any; unit?: string; highlight?: boolean; bad?: boolean }>).map(m => (
               <div key={m.label} className={`rounded-xl border px-4 py-3 ${m.bad ? "border-red-500/20 bg-red-500/5" : m.highlight ? "border-indigo-500/20 bg-indigo-500/5" : "border-border bg-muted/20"}`}>
                 <div className="flex items-center gap-1.5 mb-1">{m.icon}<p className="text-[10px] text-muted-foreground font-medium">{m.label}</p></div>
                 <p className={`text-sm font-bold ${m.bad ? "text-red-400" : m.highlight ? "text-indigo-400" : "text-foreground"}`}>{m.value}</p>
               </div>
             ))}
           </div>
+
+          {(inc?.summary || inc?.impactAnalysis) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {inc?.summary && (
+                <div className="rounded-xl border border-border bg-muted/20 px-4 py-3">
+                  <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-1">Summary</p>
+                  <p className="text-sm text-foreground leading-relaxed">{inc.summary}</p>
+                </div>
+              )}
+              {inc?.impactAnalysis && (
+                <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-3">
+                  <p className="text-[10px] text-indigo-400 font-semibold uppercase tracking-wide mb-1">Impact Analysis</p>
+                  <p className="text-sm text-foreground leading-relaxed">{inc.impactAnalysis}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── AUTO-REMEDIATION PREVIEW ── */}
@@ -261,6 +348,9 @@ export default function IncidentDetail() {
                         </div>
                       </Link>
                     ))}
+                    {(!inc?.affectedApplications || inc.affectedApplications.length === 0) && (
+                      <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-2 bg-muted/10">No incident-scoped applications.</p>
+                    )}
                   </div>
                 </div>
                 {/* Services */}
@@ -277,6 +367,9 @@ export default function IncidentDetail() {
                         <p className="text-[10px] text-red-400 font-medium">+{s.errorRateDelta}% errors</p>
                       </div>
                     ))}
+                    {(!inc?.affectedServices || inc.affectedServices.length === 0) && (
+                      <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-2 bg-muted/10">No incident-scoped services.</p>
+                    )}
                   </div>
                 </div>
                 {/* Servers */}
@@ -296,6 +389,9 @@ export default function IncidentDetail() {
                         </div>
                       </Link>
                     ))}
+                    {(!inc?.affectedServers || inc.affectedServers.length === 0) && (
+                      <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-2 bg-muted/10">No incident-scoped servers.</p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -333,11 +429,18 @@ export default function IncidentDetail() {
                           )}
                         </div>
                       ))}
+                      {(!inc?.rootCause?.causalChains || inc.rootCause.causalChains.length === 0) && (
+                        <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-2 bg-muted/10">
+                          No incident-scoped causal chain evidence.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
+
+            <DrilldownContextPanel context={inc?.drilldownContext} />
 
             {/* Evidence Metric Charts */}
             <div>
@@ -524,6 +627,11 @@ export default function IncidentDetail() {
                     </div>
                   </div>
                 ))}
+                {(!inc?.recommendations || inc.recommendations.length === 0) && (
+                  <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-3 bg-muted/10">
+                    No incident-scoped recommendations available.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -587,6 +695,11 @@ export default function IncidentDetail() {
                     </div>
                   </div>
                 ))}
+                {(!inc?.notes || inc.notes.length === 0) && (
+                  <p className="text-xs text-muted-foreground border border-border rounded-lg px-3 py-3 bg-muted/10">
+                    No notes have been added for this incident.
+                  </p>
+                )}
                 {/* Add note */}
                 <div className="pt-2 border-t border-border space-y-2">
                   <Textarea

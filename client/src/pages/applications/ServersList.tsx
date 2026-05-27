@@ -11,6 +11,7 @@ import { formatDistanceToNow } from "date-fns";
 
 interface ServersListProps {
   mode?: "servers" | "tier-nodes";
+  params?: Record<string, string | undefined>;
 }
 
 export default function ServersList({ mode = "servers" }: ServersListProps) {

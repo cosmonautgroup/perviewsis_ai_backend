@@ -24,6 +24,10 @@ import { AppDynamicsClient, createAppDynamicsClient } from "./appDynamics";
 import { DynatraceClient, createDynatraceClient, normalizeDTSeverity, normalizeDTStatus } from "./dynatrace";
 import { SyncRunLogger } from "./syncRunLogger";
 import { decryptSecret } from "./credentialCrypto";
+import {
+  generateAndSaveAiIncidentsFromTelemetry,
+  IncidentTelemetryPayload,
+} from "./incidentAi.service";
 
 export type SyncResult = {
   source: string;
@@ -128,6 +132,20 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
   });
 
   let applications = 0, incidents = 0, alerts = 0, servers = 0;
+  let incidentGenerationError: string | undefined;
+  const incidentTelemetry: IncidentTelemetryPayload = {
+    source: "appdynamics",
+    credentialId: credential?.id ?? null,
+    fetchedAt: new Date().toISOString(),
+    applications: [],
+    sourceProblems: [],
+    alerts: [],
+    errors: [],
+    servers: [],
+    serverMetrics: [],
+    applicationMetrics: [],
+    businessTransactions: [],
+  };
 
   try {
     // ── Bulk-fetch all existing externalIds for diff detection ──
@@ -185,6 +203,14 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
           },
         });
       applications++;
+      incidentTelemetry.applications.push({
+        id: app.id,
+        externalId: String(app.id),
+        name: app.name,
+        source: "appdynamics",
+        credentialId: credential?.id ?? null,
+        description: app.description,
+      });
 
       // 1b. Sync app-level performance KPIs from AppDynamics (source of truth for app cards/KPIs)
       try {
@@ -223,9 +249,19 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
             updatedAt: new Date(),
           })
           .where(appRowWhere);
+        incidentTelemetry.applicationMetrics.push({
+          applicationId: String(app.id),
+          applicationName: app.name,
+          source: "appdynamics",
+          timestamp: new Date().toISOString(),
+          avgResponseTimeMs: appRespMs,
+          callsPerMinute: appCallsPerMin,
+          errorsPerMinute: appErrorsPerMin,
+          errorRatePercent: appErrorRatePct,
+        });
       } catch (_) { /* app KPI metric sync best-effort */ }
 
-      // 2. Sync problems/incidents per app
+      // 2. Collect APM problems as telemetry signals; Ollama groups them into incidents later.
       try {
         const problems = await client.getProblems(app.id);
 
@@ -240,32 +276,24 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
         });
 
         for (const problem of problems) {
-          await db
-            .insert(dbIncidents)
-            .values({
-              externalId: String(problem.id),
-              source: "appdynamics",
-              applicationId: String(app.id),
-              title: problem.name,
-              severity: problem.severity === "CRITICAL" ? "Critical" : "Warning",
-              status: problem.status === "OPEN" ? "Open" : "Resolved",
-              startTime: problem.startTime ? new Date(problem.startTime) : null,
-              endTime: problem.endTime ? new Date(problem.endTime) : null,
-              affectedServices: problem.affectedEntityDefinitions?.map((e: any) => e.name) ?? [],
-              metadata: problem as any,
-              lastSyncAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: [dbIncidents.externalId, dbIncidents.source],
-              set: {
-                status: problem.status === "OPEN" ? "Open" : "Resolved",
-                endTime: problem.endTime ? new Date(problem.endTime) : null,
-                metadata: problem as any,
-                lastSyncAt: new Date(),
-                updatedAt: new Date(),
-              },
-            });
-          incidents++;
+          incidentTelemetry.sourceProblems.push({
+            id: problem.id,
+            externalId: String(problem.id),
+            source: "appdynamics",
+            type: "problem",
+            applicationId: String(app.id),
+            applicationName: app.name,
+            title: problem.name,
+            severity: problem.severity,
+            status: problem.status,
+            startTime: problem.startTime ? new Date(problem.startTime).toISOString() : null,
+            endTime: problem.endTime ? new Date(problem.endTime).toISOString() : null,
+            affectedEntities: problem.affectedEntityDefinitions?.map((e: any) => ({
+              type: e.entityType,
+              name: e.name,
+            })) ?? [],
+            description: problem.description,
+          });
         }
       } catch (_) { /* per-app errors are non-fatal */ }
 
@@ -311,6 +339,25 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
               },
             });
           alerts++;
+          incidentTelemetry.alerts.push({
+            id: v.id,
+            externalId: String(v.id),
+            source: "appdynamics",
+            type: "health_rule_violation",
+            applicationId: String(app.id),
+            applicationName: app.name,
+            name: v.healthRuleName || v.name || (v as any)?.triggeredEntityDefinition?.name || "Health Rule Violation",
+            severity: v.severity,
+            status: v.incidentStatus,
+            triggeredAt: ((v as any).occurrenceTime ?? (v as any).startTimeInMillis)
+              ? new Date((v as any).occurrenceTime ?? (v as any).startTimeInMillis).toISOString()
+              : null,
+            resolvedAt: ((v as any).resolvedTime ?? (v as any).endTimeInMillis)
+              ? new Date((v as any).resolvedTime ?? (v as any).endTimeInMillis).toISOString()
+              : null,
+            affectedEntityType: v.affectedEntityType,
+            affectedEntityName: v.affectedEntityName,
+          });
 
           await db
             .update(dbApplications)
@@ -360,6 +407,18 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
               },
             });
           servers++;
+          incidentTelemetry.servers.push({
+            id: node.id,
+            externalId: String(node.id),
+            source: "appdynamics",
+            applicationId: String(app.id),
+            applicationName: app.name,
+            name: node.name,
+            tier: node.tierName,
+            ip: ipList[0] ?? null,
+            appAgentPresent: node.appAgentPresent,
+            machineAgentPresent: node.machineAgentPresent,
+          });
         }
 
         // 4b. Backfill node CPU/Memory/Disk into server rows from AppDynamics metric paths
@@ -404,6 +463,17 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
             const cpu = findMetric(cpuByNode);
             const mem = findMetric(memByNode);
             const disk = findMetric(diskByNode);
+            incidentTelemetry.serverMetrics.push({
+              serverId: String(node.id),
+              serverName: node.name,
+              applicationId: String(app.id),
+              applicationName: app.name,
+              source: "appdynamics",
+              timestamp: new Date().toISOString(),
+              cpuUsagePercent: cpu,
+              memoryUsagePercent: mem,
+              diskUsagePercent: disk,
+            });
             if (cpu == null && mem == null && disk == null) continue;
             await db.update(dbServers)
               .set({
@@ -533,6 +603,23 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
               updatedAt: new Date(),
             },
           });
+          incidentTelemetry.businessTransactions.push({
+            id: bt.id,
+            externalId: String(bt.id),
+            source: "appdynamics",
+            applicationId: String(app.id),
+            applicationName: app.name,
+            name: bt.name,
+            tier: bt.tierName,
+            timestamp: new Date().toISOString(),
+            avgResponseTimeMs: avgResponseTime,
+            callsPerMinute,
+            errorsPerMinute,
+            errorRatePercent: callsPerMinute > 0 ? (errorsPerMinute / callsPerMinute) * 100 : 0,
+            slowCalls,
+            verySlowCalls,
+            status: btStatus,
+          });
         }
       } catch (_) { }
 
@@ -585,6 +672,21 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
               updatedAt: new Date(),
             },
           });
+          incidentTelemetry.errors.push({
+            id: eventId,
+            externalId: eventId,
+            source: "appdynamics",
+            applicationId: String(app.id),
+            applicationName: app.name,
+            service: event.tierName ?? event.nodeName ?? app.name,
+            message: errorMsg,
+            errorType,
+            severity,
+            status: "Active",
+            timestamp: event.eventTime ? new Date(event.eventTime).toISOString() : new Date().toISOString(),
+            nodeName: event.nodeName ?? null,
+            summary: event.summary ?? null,
+          });
         }
       } catch (_) { }
 
@@ -592,6 +694,17 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
       try {
         const cpuData = await client.getCpuMetrics(app.id);
         for (const series of cpuData) {
+          const latestCpu = latestMetricValue(series.metricValues);
+          incidentTelemetry.serverMetrics.push({
+            applicationId: String(app.id),
+            applicationName: app.name,
+            source: "appdynamics",
+            metricName: "cpu_usage",
+            metricPath: series.metricPath,
+            serverName: parseNodeNameFromMetricPath(series.metricPath),
+            timestamp: new Date().toISOString(),
+            value: latestCpu,
+          });
           for (const point of series.metricValues) {
             await db.insert(dbMetrics).values({
               entityId: String(app.id),
@@ -606,6 +719,13 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
       } catch (_) { }
     }
 
+    try {
+      incidents = await generateAndSaveAiIncidentsFromTelemetry(incidentTelemetry);
+    } catch (err: any) {
+      incidentGenerationError = err?.message ?? "AI incident generation failed";
+      console.warn("[SyncService] AppDynamics AI incident generation failed:", incidentGenerationError);
+    }
+
     // Update credential last sync time
     if (credential) {
       await db.update(apmCredentials).set({ lastSyncAt: new Date() }).where(eq(apmCredentials.id, credential.id));
@@ -617,12 +737,13 @@ async function syncAppDynamics(credential?: ApmCredential, actorUserId?: number 
 
     return {
       source: "appdynamics",
-      status: "success",
+      status: incidentGenerationError ? "partial" : "success",
       recordsSynced: applications + incidents + alerts + servers,
       applicationsCount: applications,
       incidentsCount: incidents,
       alertsCount: alerts,
       serversCount: servers,
+      errorMessage: incidentGenerationError,
       durationMs: Date.now() - start,
       syncRunId,
     };
@@ -686,6 +807,20 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
   });
 
   let applications = 0, incidents = 0, alerts = 0, servers = 0;
+  let incidentGenerationError: string | undefined;
+  const incidentTelemetry: IncidentTelemetryPayload = {
+    source: "dynatrace",
+    credentialId: credential?.id ?? null,
+    fetchedAt: new Date().toISOString(),
+    applications: [],
+    sourceProblems: [],
+    alerts: [],
+    errors: [],
+    servers: [],
+    serverMetrics: [],
+    applicationMetrics: [],
+    businessTransactions: [],
+  };
 
   try {
     // ── Bulk-fetch all existing externalIds ──
@@ -746,9 +881,18 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
           },
         });
       applications++;
+      incidentTelemetry.applications.push({
+        id: externalId,
+        externalId,
+        name: appName,
+        source: "dynatrace",
+        credentialId: credential?.id ?? null,
+        displayName: app?.displayName ?? app?.name ?? null,
+        entityId: app?.entityId ?? null,
+      });
     }
 
-    // 2. Sync problems as incidents
+    // 2. Collect Dynatrace problems as telemetry signals; Ollama groups them into incidents later.
     const { problems } = await client.getProblems("now-24h");
 
     const newProblems     = problems.filter(p => !existingIncidentIds.has(p.problemId));
@@ -764,33 +908,80 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
     for (const problem of problems) {
       const sev = normalizeDTSeverity(problem.severityLevel);
       const status = normalizeDTStatus(problem.status);
-      await db
-        .insert(dbIncidents)
-        .values({
-          externalId: problem.problemId,
-          source: "dynatrace",
-          applicationId: problem.impactedEntities?.[0]?.entityId?.id ?? null,
-          title: problem.title,
-          severity: sev,
-          status,
-          startTime: problem.startTime ? new Date(problem.startTime) : null,
-          endTime: problem.endTime ? new Date(problem.endTime) : null,
-          affectedServices: problem.impactedEntities?.map((e: any) => e.name) ?? [],
-          metadata: problem as any,
-          lastSyncAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: [dbIncidents.externalId, dbIncidents.source],
-          set: {
-            status,
-            endTime: problem.endTime ? new Date(problem.endTime) : null,
-            metadata: problem as any,
-            lastSyncAt: new Date(),
-            updatedAt: new Date(),
-          },
-        });
-      incidents++;
+      incidentTelemetry.sourceProblems.push({
+        id: problem.problemId,
+        externalId: problem.problemId,
+        displayId: problem.displayId,
+        source: "dynatrace",
+        type: "problem",
+        title: problem.title,
+        severity: sev,
+        rawSeverity: problem.severityLevel,
+        status,
+        rawStatus: problem.status,
+        startTime: problem.startTime ? new Date(problem.startTime).toISOString() : null,
+        endTime: problem.endTime ? new Date(problem.endTime).toISOString() : null,
+        impactedEntities: problem.impactedEntities?.map((e: any) => ({
+          id: e.entityId?.id,
+          type: e.entityId?.type,
+          name: e.name,
+        })) ?? [],
+        rootCauseEntity: problem.rootCauseEntity
+          ? {
+              id: problem.rootCauseEntity.entityId?.id,
+              type: problem.rootCauseEntity.entityId?.type,
+              name: problem.rootCauseEntity.name,
+            }
+          : null,
+      });
     }
+
+    try {
+      const { events } = await client.getEvents("now-24h");
+      logger.log({
+        endpoint: "/api/v2/events",
+        requestParams: { from: "now-24h" },
+        rawResponse: events,
+        newRecords: events,
+        updatedRecords: [],
+      });
+      for (const event of events ?? []) {
+        incidentTelemetry.alerts.push({
+          id: String(event?.eventId ?? event?.id ?? event?.startTime ?? `${Date.now()}`),
+          externalId: String(event?.eventId ?? event?.id ?? event?.startTime ?? `${Date.now()}`),
+          source: "dynatrace",
+          type: String(event?.eventType ?? event?.eventKind ?? "event"),
+          title: String(event?.title ?? event?.displayName ?? event?.eventType ?? "Dynatrace event"),
+          severity: String(event?.severityLevel ?? event?.severity ?? "Medium"),
+          status: String(event?.status ?? "Active"),
+          timestamp: event?.startTime ? new Date(event.startTime).toISOString() : new Date().toISOString(),
+          entityId: event?.entityId ?? event?.affectedEntity?.entityId ?? null,
+          entityName: event?.entityName ?? event?.affectedEntity?.name ?? null,
+        });
+      }
+    } catch (_) { /* Dynatrace event telemetry is best-effort */ }
+
+    try {
+      const { results } = await client.getLogs("status:error", "now-24h");
+      logger.log({
+        endpoint: "/api/v2/logs/search",
+        requestParams: { query: "status:error", from: "now-24h" },
+        rawResponse: results,
+        newRecords: results,
+        updatedRecords: [],
+      });
+      for (const log of results ?? []) {
+        incidentTelemetry.errors.push({
+          id: `${log.timestamp}-${String(log.content ?? "").slice(0, 40)}`,
+          source: "dynatrace",
+          type: "log_error",
+          timestamp: log.timestamp,
+          severity: log.level,
+          message: log.content,
+          attributes: log.additionalColumns ?? {},
+        });
+      }
+    } catch (_) { /* Dynatrace log telemetry is best-effort */ }
 
     // 3. Sync hosts as servers
     const { entities: hosts } = await client.getHosts();
@@ -828,11 +1019,57 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
           },
         });
       servers++;
+      incidentTelemetry.servers.push({
+        id: host.entityId,
+        externalId: host.entityId,
+        source: "dynatrace",
+        name: host.displayName,
+        type: host.type,
+        role: "Host",
+        tier: "Infrastructure",
+        properties: host.properties ?? {},
+        tags: host.tags ?? [],
+      });
     }
 
-    // 4. Sync host CPU metrics
+    // 4. Sync and collect host/service metrics for incident reasoning
     try {
-      const cpuResult = await client.getCpuMetrics("now-2h");
+      const [cpuResult, memoryResult, diskResult, serviceResponseResult, serviceErrorResult, serviceThroughputResult] = await Promise.all([
+        client.getCpuMetrics("now-2h"),
+        client.getMemoryMetrics("now-2h"),
+        client.getDiskMetrics("now-2h"),
+        client.getServiceResponseTime("now-2h"),
+        client.getServiceErrorRate("now-2h"),
+        client.getServiceThroughput("now-2h"),
+      ]);
+      const collectMetric = (
+        metricName: string,
+        result: Awaited<ReturnType<DynatraceClient["getCpuMetrics"]>>,
+        target: IncidentTelemetryPayload["serverMetrics"] | IncidentTelemetryPayload["applicationMetrics"],
+      ) => {
+        for (const series of result.result ?? []) {
+          for (const dataPoint of series.data ?? []) {
+            const latestIdx = dataPoint.values.map((v, idx) => ({ v, idx })).filter((p) => p.v != null).at(-1)?.idx;
+            if (latestIdx == null) continue;
+            target.push({
+              source: "dynatrace",
+              metricName,
+              metricId: series.metricId,
+              dimensions: series.dimensions ?? [],
+              dimensionMap: series.dimensionMap ?? {},
+              timestamp: new Date(dataPoint.timestamps[latestIdx]).toISOString(),
+              value: dataPoint.values[latestIdx],
+            });
+          }
+        }
+      };
+      collectMetric("cpu_usage", cpuResult, incidentTelemetry.serverMetrics);
+      collectMetric("memory_usage", memoryResult, incidentTelemetry.serverMetrics);
+      collectMetric("disk_used_percent", diskResult, incidentTelemetry.serverMetrics);
+      collectMetric("service_response_time", serviceResponseResult, incidentTelemetry.applicationMetrics);
+      collectMetric("service_error_rate", serviceErrorResult, incidentTelemetry.applicationMetrics);
+      collectMetric("service_throughput", serviceThroughputResult, incidentTelemetry.applicationMetrics);
+
       for (const series of cpuResult.result ?? []) {
         for (const dataPoint of series.data ?? []) {
           for (let i = 0; i < dataPoint.timestamps.length; i++) {
@@ -851,6 +1088,13 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
       }
     } catch (_) { }
 
+    try {
+      incidents = await generateAndSaveAiIncidentsFromTelemetry(incidentTelemetry);
+    } catch (err: any) {
+      incidentGenerationError = err?.message ?? "AI incident generation failed";
+      console.warn("[SyncService] Dynatrace AI incident generation failed:", incidentGenerationError);
+    }
+
     // Update credential last sync time
     if (credential) {
       await db.update(apmCredentials).set({ lastSyncAt: new Date() }).where(eq(apmCredentials.id, credential.id));
@@ -861,12 +1105,13 @@ async function syncDynatrace(credential?: ApmCredential, actorUserId?: number | 
 
     return {
       source: "dynatrace",
-      status: "success",
+      status: incidentGenerationError ? "partial" : "success",
       recordsSynced: applications + incidents + alerts + servers,
       applicationsCount: applications,
       incidentsCount: incidents,
       alertsCount: alerts,
       serversCount: servers,
+      errorMessage: incidentGenerationError,
       durationMs: Date.now() - start,
       syncRunId,
     };

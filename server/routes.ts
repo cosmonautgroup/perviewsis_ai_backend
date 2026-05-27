@@ -340,7 +340,7 @@ export async function registerRoutes(
     if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(", ")}` });
     const [updated] = await db.update(organizationMembers)
       .set({ role })
-      .where(eq(organizationMembers.id, parseInt(req.params.id)))
+      .where(eq(organizationMembers.id, parseInt(String(req.params.id), 10)))
       .returning();
     res.json(updated);
   });
@@ -348,9 +348,9 @@ export async function registerRoutes(
   app.delete("/api/org/members/:id", requireRole("Admin"), async (req, res) => {
     const user = req.user as import("@shared/schema").User;
     // Prevent removing yourself
-    const [member] = await db.select().from(organizationMembers).where(eq(organizationMembers.id, parseInt(req.params.id)));
+    const [member] = await db.select().from(organizationMembers).where(eq(organizationMembers.id, parseInt(String(req.params.id), 10)));
     if (member?.userId === user.id) return res.status(400).json({ error: "Cannot remove yourself" });
-    await db.delete(organizationMembers).where(eq(organizationMembers.id, parseInt(req.params.id)));
+    await db.delete(organizationMembers).where(eq(organizationMembers.id, parseInt(String(req.params.id), 10)));
     res.json({ success: true });
   });
 
@@ -386,7 +386,7 @@ export async function registerRoutes(
   });
 
   app.delete("/api/org/invitations/:id", requireRole("Admin"), async (req, res) => {
-    await db.delete(invitations).where(eq(invitations.id, parseInt(req.params.id)));
+    await db.delete(invitations).where(eq(invitations.id, parseInt(String(req.params.id), 10)));
     res.json({ success: true });
   });
 
@@ -568,8 +568,8 @@ export async function registerRoutes(
           out.set(key, Math.min(100, Math.max(0, m["user"] + m["system"])));
           continue;
         }
-        const vals = Object.values(m).filter((v) => Number.isFinite(v));
-        if (vals.length > 0) out.set(key, vals.reduce((s, v) => s + v, 0) / vals.length);
+        const vals = Object.values(m).filter((v): v is number => Number.isFinite(v));
+        if (vals.length > 0) out.set(key, vals.reduce((s: number, v: number) => s + v, 0) / vals.length);
       }
       return out;
     };
@@ -623,7 +623,7 @@ export async function registerRoutes(
       const out = new Map<string, number>();
       for (const [k, vals] of grouped.entries()) {
         if (!vals.length) continue;
-        out.set(k, vals.reduce((s, v) => s + v, 0) / vals.length);
+        out.set(k, vals.reduce((s: number, v: number) => s + v, 0) / vals.length);
       }
       return out;
     };
@@ -1140,6 +1140,20 @@ export async function registerRoutes(
         const v = (num / den) * 100;
         return Math.max(0, v);
       };
+      const txKey = txIdRaw.toLowerCase();
+      const matchesLiveTransaction = (bt: any) => {
+        const liveId = String(bt?.id ?? "");
+        const liveName = String(bt?.name ?? "").trim().toLowerCase();
+        return liveId === txIdRaw || liveName === txKey || (Number.isFinite(txIdNum) && Number(bt?.id) === txIdNum);
+      };
+      const txIdentityWhere = or(
+        Number.isFinite(txIdNum) ? eq(dbTransactions.id, txIdNum) : sql`false`,
+        eq(dbTransactions.externalId, txIdRaw),
+        eq(dbTransactions.name, txIdRaw),
+      );
+      const txCredentialWhere = dbApp.credentialId != null
+        ? eq(dbTransactions.credentialId, dbApp.credentialId)
+        : sql`true`;
       // Prefer live AppDynamics transaction details when available.
       if (dbApp.source === "appdynamics" && dbApp.credentialId != null) {
         try {
@@ -1167,7 +1181,7 @@ export async function registerRoutes(
                 client.getMetrics(appExternalNum, "Business Transaction Performance|Business Transactions|*|*|Number of Slow Calls", durationMins),
                 client.getMetrics(appExternalNum, "Business Transaction Performance|Business Transactions|*|*|Number of Very Slow Calls", durationMins),
               ]);
-              const match = (live ?? []).find((bt: any) => String(bt.id) === txIdRaw || (Number.isFinite(txIdNum) && bt.id === txIdNum));
+              const match = (live ?? []).find(matchesLiveTransaction);
               if (match) {
                 const btIdFromMetricName = (metricName: string | null | undefined) => {
                   const m = String(metricName ?? "").match(/BT:(\d+)/i);
@@ -1280,11 +1294,10 @@ export async function registerRoutes(
 
       const [bt] = await db.select().from(dbTransactions).where(and(
         eq(dbTransactions.applicationId, String(dbApp.externalId)),
-        or(
-          Number.isFinite(txIdNum) ? eq(dbTransactions.id, txIdNum) : sql`false`,
-          eq(dbTransactions.externalId, txIdRaw),
-        ),
-      )).limit(1);
+        eq(dbTransactions.source, dbApp.source),
+        txCredentialWhere,
+        txIdentityWhere,
+      )).orderBy(desc(dbTransactions.updatedAt)).limit(1);
 
       if (bt) {
         const calls = Number(bt.callsPerMinute ?? 0);
@@ -1341,6 +1354,43 @@ export async function registerRoutes(
     const pct = (num: number, den: number) => {
       if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return 0;
       return Math.max(0, (num / den) * 100);
+    };
+    const txKey = txIdRaw.toLowerCase();
+    const matchesLiveTransaction = (bt: any) => {
+      const liveId = String(bt?.id ?? "");
+      const liveName = String(bt?.name ?? "").trim().toLowerCase();
+      return liveId === txIdRaw || liveName === txKey || (Number.isFinite(txIdNum) && Number(bt?.id) === txIdNum);
+    };
+    const txIdentityWhere = or(
+      Number.isFinite(txIdNum) ? eq(dbTransactions.id, txIdNum) : sql`false`,
+      eq(dbTransactions.externalId, txIdRaw),
+      eq(dbTransactions.name, txIdRaw),
+    );
+    const txCredentialWhere = dbApp.credentialId != null
+      ? eq(dbTransactions.credentialId, dbApp.credentialId)
+      : sql`true`;
+    const errorMatchesTransaction = (e: any, txIdValue: string | number | null | undefined, txNameValue: string | null | undefined) => {
+      const txIdText = String(txIdValue ?? "").trim().toLowerCase();
+      const txNameText = String(txNameValue ?? "").trim().toLowerCase();
+      const md = (e?.metadata ?? {}) as any;
+      const affectedEntities = Array.isArray(md?.affectedEntities) ? md.affectedEntities : [];
+      const entityMatch = affectedEntities.some((entity: any) => {
+        const type = String(entity?.entityType ?? "").toUpperCase();
+        if (!type.includes("BUSINESS_TRANSACTION")) return false;
+        const entityId = String(entity?.entityId ?? "").trim().toLowerCase();
+        const entityName = String(entity?.name ?? "").trim().toLowerCase();
+        return (!!txIdText && entityId === txIdText) || (!!txNameText && entityName === txNameText);
+      });
+      if (entityMatch) return true;
+      const haystack = [
+        e?.message,
+        e?.cluster,
+        e?.service,
+        e?.applicationName,
+        md?.summary,
+        md?.businessTransactionName,
+      ].map((v) => String(v ?? "").toLowerCase()).join(" ");
+      return !!txNameText && haystack.includes(txNameText);
     };
     const btIdFromMetricName = (metricName: string | null | undefined) => {
       const m = String(metricName ?? "").match(/BT:(\d+)/i);
@@ -1402,7 +1452,7 @@ export async function registerRoutes(
               client.getMetrics(appExternalNum, "Business Transaction Performance|Business Transactions|*|*|Number of Very Slow Calls", durationMins),
             ]);
 
-            const match = (live ?? []).find((bt: any) => String(bt.id) === txIdRaw || (Number.isFinite(txIdNum) && bt.id === txIdNum));
+            const match = (live ?? []).find(matchesLiveTransaction);
             if (match) {
               const key = `${String(match.tierName ?? "").toLowerCase()}||${String(match.name ?? "").toLowerCase()}`;
               const findMetricRow = (rows: any[]) => {
@@ -1460,10 +1510,9 @@ export async function registerRoutes(
                 .limit(60);
               const txNeedle = String(match.name ?? "").toLowerCase();
               const txErrors = appErrors.filter((e: any) => {
-                const hay = `${String(e.message ?? "")} ${String(e.cluster ?? "")} ${String(e.service ?? "")}`.toLowerCase();
-                return txNeedle.length > 0 && hay.includes(txNeedle);
+                return errorMatchesTransaction(e, match.id, match.name) || (txNeedle.length > 0 && String(e.message ?? "").toLowerCase().includes(txNeedle));
               });
-              const chosenErrors = (txErrors.length > 0 ? txErrors : appErrors).slice(0, 20);
+              const chosenErrors = txErrors.slice(0, 20);
 
               return res.json({
                 transaction: {
@@ -1537,11 +1586,10 @@ export async function registerRoutes(
 
     const [bt] = await db.select().from(dbTransactions).where(and(
       eq(dbTransactions.applicationId, String(dbApp.externalId)),
-      or(
-        Number.isFinite(txIdNum) ? eq(dbTransactions.id, txIdNum) : sql`false`,
-        eq(dbTransactions.externalId, txIdRaw),
-      ),
-    )).limit(1);
+      eq(dbTransactions.source, dbApp.source),
+      txCredentialWhere,
+      txIdentityWhere,
+    )).orderBy(desc(dbTransactions.updatedAt)).limit(1);
 
     if (!bt) return res.status(404).json({ message: "Transaction not found" });
 
@@ -1549,10 +1597,12 @@ export async function registerRoutes(
     const errPerMin = Number((bt.metadata as any)?.errorsPerMinute ?? 0);
     const slowCalls = Number((bt.metadata as any)?.slowCalls ?? 0);
     const verySlowCalls = Number((bt.metadata as any)?.verySlowCalls ?? 0);
-    const errors = await db.select().from(dbErrors)
+    const errors = (await db.select().from(dbErrors)
       .where(eq(dbErrors.applicationId, String(dbApp.externalId)))
       .orderBy(desc(dbErrors.lastOccurrence))
-      .limit(20);
+      .limit(80))
+      .filter((e: any) => errorMatchesTransaction(e, bt.externalId ?? bt.id, bt.name))
+      .slice(0, 20);
 
     return res.json({
       transaction: {
@@ -1776,7 +1826,7 @@ export async function registerRoutes(
             affectedServices: inc.affectedServices ?? [],
             affectedTiers: inc.affectedServices ?? [],
             rootCause: inc.rootCause ?? null,
-            mttr: inc.mttr ?? null,
+            mttr: (inc as any).mttr ?? null,
             impactScore: sev === "Critical" ? 88 : sev === "Warning" ? 55 : 20,
             recommendation: inc.rootCause
               ? `Investigate and remediate: ${inc.rootCause.slice(0, 120)}`
@@ -2125,6 +2175,7 @@ export async function registerRoutes(
             affectedUsers,
             duration: "Ongoing",
             revenueImpact,
+            incidentId: String(a.externalId ?? ""),
             alertId: String(a.externalId ?? ""),
           };
         });
@@ -4274,13 +4325,14 @@ export async function registerRoutes(
         const exId = entityId;
         const [inc] = await db.select().from(dbIncidents).where(eq(dbIncidents.externalId, exId));
         if (inc) {
-          if (!scope.appExternalIdSet.has(String(inc.applicationId ?? ""))) {
+          const incidentAppId = inc.applicationId;
+          if (!incidentAppId || !scope.appExternalIdSet.has(String(incidentAppId))) {
             return res.json({ nodes: [], edges: [], summary: {} });
           }
           nodes.push({ id: exId, type: "incident", label: inc.title.substring(0, 40), severity: inc.severity });
-          const relErrors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, inc.applicationId)).limit(4);
-          const relAlerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, inc.applicationId)).limit(4);
-          const relServers = await db.select().from(dbServers).where(eq(dbServers.applicationId, inc.applicationId)).limit(3);
+          const relErrors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, incidentAppId)).limit(4);
+          const relAlerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, incidentAppId)).limit(4);
+          const relServers = await db.select().from(dbServers).where(eq(dbServers.applicationId, incidentAppId)).limit(3);
           relErrors.forEach(e => { nodes.push({ id: `ERR-${e.id}`, type: "error", label: e.errorType ?? "Error", severity: e.severity }); edges.push({ source: exId, target: `ERR-${e.id}`, relation: "caused" }); });
           relAlerts.forEach(a => { nodes.push({ id: `ALT-${a.id}`, type: "alert", label: a.name.substring(0, 40), severity: a.severity }); edges.push({ source: exId, target: `ALT-${a.id}`, relation: "triggered" }); });
           relServers.forEach(s => { nodes.push({ id: s.externalId, type: "node", label: s.name, severity: s.status === "Healthy" ? "Low" : "Warning" }); edges.push({ source: exId, target: s.externalId, relation: "affects" }); });
@@ -4361,6 +4413,62 @@ export async function registerRoutes(
       }
       if (!appExternalId) return res.json({ alerts: [], errors: [], nodes: [] });
       const [app] = await db.select({ id: dbApplications.id, name: dbApplications.name }).from(dbApplications).where(eq(dbApplications.externalId, appExternalId));
+      const incMetadata = (inc?.metadata ?? {}) as any;
+      const ollamaIncident = incMetadata?.aiGenerated ? incMetadata?.ollamaIncident : null;
+      const aiContext = ollamaIncident?.drilldown_context ?? {};
+      const textFromSignal = (signal: any, fallback = "AI signal") => {
+        if (typeof signal === "string") return signal;
+        if (typeof signal === "number" || typeof signal === "boolean") return String(signal);
+        if (!signal || typeof signal !== "object") return fallback;
+        return String(signal.title ?? signal.name ?? signal.message ?? signal.event ?? signal.metricName ?? signal.id ?? fallback);
+      };
+      const aiAlerts = Array.isArray(aiContext?.alerts) ? aiContext.alerts.slice(0, 4).map((signal: any, i: number) => ({
+        alertId: String(signal?.id ?? signal?.externalId ?? `AI-ALERT-${i + 1}`),
+        entity: textFromSignal(signal),
+        severity: String(signal?.severity ?? ollamaIncident?.severity ?? "Warning"),
+        status: String(signal?.status ?? "Active"),
+        timestamp: signal?.timestamp ? Date.parse(String(signal.timestamp)) : Date.now(),
+        correlationScore: Number(ollamaIncident?.confidence_score ?? 0.82),
+        source: "Ollama",
+        rule: textFromSignal(signal),
+        applicationId: app?.id ?? null,
+        applicationName: app?.name ?? null,
+      })) : [];
+      const aiErrors = Array.isArray(aiContext?.errors) ? aiContext.errors.slice(0, 4).map((signal: any, i: number) => ({
+        errorId: String(signal?.id ?? signal?.externalId ?? `AI-ERR-${i + 1}`),
+        type: String(signal?.errorType ?? signal?.type ?? "Correlated Error"),
+        message: textFromSignal(signal, "Correlated error signal"),
+        severity: String(signal?.severity ?? ollamaIncident?.severity ?? "Medium"),
+        occurrences: Number(signal?.frequency ?? signal?.occurrences ?? 1),
+        correlationScore: Number(ollamaIncident?.confidence_score ?? 0.8),
+        clusterId: String(signal?.cluster ?? signal?.clusterId ?? "ollama-context"),
+        source: "Ollama",
+        timestamp: signal?.timestamp ? Date.parse(String(signal.timestamp)) : Date.now(),
+        appId: appExternalId,
+        applicationName: app?.name ?? null,
+        service: String(signal?.service ?? signal?.tier ?? "Unknown Service"),
+        server: String(signal?.server ?? signal?.nodeName ?? "N/A"),
+        firstSeen: null,
+        lastSeen: signal?.timestamp ? Date.parse(String(signal.timestamp)) : null,
+        requestPath: signal?.requestPath ?? null,
+        businessTransaction: signal?.businessTransaction ?? null,
+        callToCheck: signal?.requestPath ?? signal?.businessTransaction ?? null,
+        rootCause: textFromSignal(signal, ""),
+        recommendation: null,
+      })) : [];
+      const aiServerMetrics = Array.isArray(aiContext?.server_metrics) ? aiContext.server_metrics : [];
+      const aiNodes = aiServerMetrics.slice(0, 3).map((signal: any, i: number) => ({
+        nodeDbId: signal?.serverId ?? signal?.id ?? `ai-node-${i + 1}`,
+        nodeId: String(signal?.serverId ?? signal?.entityId ?? signal?.id ?? `AI-NODE-${i + 1}`),
+        name: String(signal?.serverName ?? signal?.name ?? signal?.entityName ?? `Server metric ${i + 1}`),
+        status: String(signal?.status ?? ollamaIncident?.severity ?? "Warning"),
+        cpuUsage: signal?.cpuUsagePercent ?? (String(signal?.metricName ?? "").includes("cpu") ? signal?.value : null),
+        memoryUsage: signal?.memoryUsagePercent ?? (String(signal?.metricName ?? "").includes("memory") ? signal?.value : null),
+        correlationScore: Number(ollamaIncident?.confidence_score ?? 0.78),
+        role: "Server",
+        correlationType: "Ollama incident context",
+        href: app?.id ? `/applications/${app.id}/servers/${signal?.serverId ?? signal?.id ?? ""}` : `/servers`,
+      }));
       // Keep related drilldown counts aligned with correlation bar chips.
       const alerts = await db.select().from(dbAlerts).where(eq(dbAlerts.applicationId, appExternalId)).limit(4);
       const rawErrors = await db.select().from(dbErrors).where(eq(dbErrors.applicationId, appExternalId)).orderBy(desc(dbErrors.lastOccurrence)).limit(120);
@@ -4429,9 +4537,9 @@ export async function registerRoutes(
       const errors = (nonDiagnosticErrors.length > 0 ? nonDiagnosticErrors : normalizedErrors).slice(0, 4);
       const nodes = await db.select().from(dbServers).where(eq(dbServers.applicationId, appExternalId)).limit(3);
       return res.json({
-        alerts: alerts.map(a => ({ alertId: `ALT-${a.id}`, entity: a.name, severity: a.severity, status: a.status, timestamp: a.triggeredAt?.getTime(), correlationScore: 0.82, source: a.source === "appdynamics" ? "AppDynamics" : "Dynatrace", rule: a.name, applicationId: app?.id ?? null, applicationName: app?.name ?? null })),
-        errors: errors.map(({ isDiagnostic, ...row }) => row),
-        nodes: nodes.map(n => ({ nodeDbId: n.id, nodeId: n.externalId ?? String(n.id), name: n.name, status: n.status, cpuUsage: n.cpuUsage, memoryUsage: n.memoryUsage, correlationScore: 0.78, role: n.role ?? "Server", correlationType: "Affected during incident window", href: app?.id ? `/applications/${app.id}/servers/${n.id}` : `/servers` })),
+        alerts: aiAlerts.length > 0 ? aiAlerts : alerts.map(a => ({ alertId: `ALT-${a.id}`, entity: a.name, severity: a.severity, status: a.status, timestamp: a.triggeredAt?.getTime(), correlationScore: 0.82, source: a.source === "appdynamics" ? "AppDynamics" : "Dynatrace", rule: a.name, applicationId: app?.id ?? null, applicationName: app?.name ?? null })),
+        errors: aiErrors.length > 0 ? aiErrors : errors.map(({ isDiagnostic, ...row }) => row),
+        nodes: aiNodes.length > 0 ? aiNodes : nodes.map(n => ({ nodeDbId: n.id, nodeId: n.externalId ?? String(n.id), name: n.name, status: n.status, cpuUsage: n.cpuUsage, memoryUsage: n.memoryUsage, correlationScore: 0.78, role: n.role ?? "Server", correlationType: "Affected during incident window", href: app?.id ? `/applications/${app.id}/servers/${n.id}` : `/servers` })),
       });
     } catch { return res.json({ alerts: [], errors: [], nodes: [] }); }
   });
@@ -6368,7 +6476,7 @@ export async function registerRoutes(
           affectedServices: inc.affectedServices ?? [],
           affectedTiers: inc.affectedServices ?? [],
           rootCause: inc.rootCause ?? null,
-          mttr: inc.mttr ?? null,
+          mttr: (inc as any).mttr ?? null,
           impactScore: sev === "Critical" ? 88 : sev === "Warning" ? 55 : 20,
           applicationName: appInfo?.name ?? inc.applicationId,
           applicationId: appInfo?.id ?? null,
@@ -6387,25 +6495,95 @@ export async function registerRoutes(
       // Try DB first (handles showcase IDs like SC-INC-001)
       const [dbInc] = await db.select().from(dbIncidents).where(eq(dbIncidents.externalId, incidentId));
       if (dbInc) {
-        if (!scope.appExternalIdSet.has(String(dbInc.applicationId ?? ""))) {
+        const dbIncAppId = dbInc.applicationId;
+        if (!dbIncAppId || !scope.appExternalIdSet.has(String(dbIncAppId))) {
           return res.status(404).json({ message: "Incident not found" });
         }
         const now = Date.now();
         const sev = dbInc.severity ?? "Warning";
         const relatedAlerts = await db.select().from(dbAlerts)
-          .where(eq(dbAlerts.applicationId, dbInc.applicationId))
+          .where(eq(dbAlerts.applicationId, dbIncAppId))
           .orderBy(desc(dbAlerts.triggeredAt))
           .limit(40);
         const relatedErrors = await db.select().from(dbErrors)
-          .where(eq(dbErrors.applicationId, dbInc.applicationId))
+          .where(eq(dbErrors.applicationId, dbIncAppId))
           .orderBy(desc(dbErrors.lastOccurrence))
           .limit(40);
         const txRows = await db.select().from(dbTransactions)
-          .where(eq(dbTransactions.applicationId, dbInc.applicationId))
+          .where(eq(dbTransactions.applicationId, dbIncAppId))
           .orderBy(desc(dbTransactions.updatedAt))
           .limit(120);
-        const [app] = await db.select({ id: dbApplications.id, name: dbApplications.name }).from(dbApplications).where(eq(dbApplications.externalId, dbInc.applicationId));
+        const serverRows = await db.select().from(dbServers)
+          .where(eq(dbServers.applicationId, dbIncAppId))
+          .limit(80);
+        const [app] = await db.select({
+          id: dbApplications.id,
+          externalId: dbApplications.externalId,
+          name: dbApplications.name,
+          status: dbApplications.status,
+          callsPerMinute: dbApplications.callsPerMinute,
+          avgResponseTime: dbApplications.avgResponseTime,
+          errorRate: dbApplications.errorRate,
+          healthScore: dbApplications.healthScore,
+        }).from(dbApplications).where(eq(dbApplications.externalId, dbIncAppId));
         const services: string[] = (dbInc.affectedServices as string[]) ?? [];
+        const incidentMetadata = (dbInc.metadata ?? {}) as any;
+        const ollamaIncident = incidentMetadata?.aiGenerated ? incidentMetadata?.ollamaIncident : null;
+        const asText = (value: any, fallback = ""): string => {
+          if (typeof value === "string") return value.trim() || fallback;
+          if (typeof value === "number" || typeof value === "boolean") return String(value);
+          if (value && typeof value === "object") {
+            return String(value.action ?? value.title ?? value.name ?? value.event ?? value.message ?? fallback).trim() || fallback;
+          }
+          return fallback;
+        };
+        const asList = (value: any): any[] => Array.isArray(value) ? value : [];
+        const toFinite = (value: any, fallback = 0): number => {
+          const n = Number(value);
+          return Number.isFinite(n) ? n : fallback;
+        };
+        const uniqueBy = <T,>(rows: T[], keyFn: (row: T) => string): T[] => {
+          const seen = new Set<string>();
+          const out: T[] = [];
+          for (const row of rows) {
+            const key = keyFn(row);
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            out.push(row);
+          }
+          return out;
+        };
+        const collectSignalRefs = (value: any): Set<string> => {
+          const refs = new Set<string>();
+          const visit = (item: any) => {
+            if (item == null) return;
+            if (typeof item === "string" || typeof item === "number") {
+              const s = String(item).trim().toLowerCase();
+              if (s) refs.add(s);
+              return;
+            }
+            if (Array.isArray(item)) {
+              item.forEach(visit);
+              return;
+            }
+            if (typeof item === "object") {
+              ["id", "externalId", "entityId", "name", "title", "service", "applicationName", "businessTransaction", "transaction"].forEach((key) => visit(item[key]));
+            }
+          };
+          visit(value);
+          return refs;
+        };
+        const signalMatchesRefs = (row: any, refs: Set<string>, fields: string[]) => {
+          if (refs.size === 0) return false;
+          return fields.some((field) => {
+            const value = String(row?.[field] ?? "").trim().toLowerCase();
+            return value && refs.has(value);
+          });
+        };
+        const aiConfidenceValue = Number(ollamaIncident?.confidence_score ?? NaN);
+        const aiConfidencePercent = Number.isFinite(aiConfidenceValue)
+          ? Math.max(1, Math.min(99, Math.round(aiConfidenceValue <= 1 ? aiConfidenceValue * 100 : aiConfidenceValue)))
+          : null;
         const alertTimes = relatedAlerts
           .map((a) => a.triggeredAt?.getTime?.() ?? null)
           .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
@@ -6442,7 +6620,7 @@ export async function registerRoutes(
           + Math.min(4, Math.max(0, services.length - 1))
           + (dbInc.status === "Resolved" ? -4 : 2)
           + (dbInc.rootCause ? 2 : 0);
-        const confidence = Math.max(55, Math.min(96, Math.round(confidenceRaw)));
+        const confidence = aiConfidencePercent ?? Math.max(55, Math.min(96, Math.round(confidenceRaw)));
         const user = scope.user as import("@shared/schema").User | undefined;
         const orgData = scope.orgData;
         const orgId = orgData?.org?.id ?? null;
@@ -6452,15 +6630,7 @@ export async function registerRoutes(
           .orderBy(desc(incidentNotes.createdAt))
           .limit(100);
         const savedNotes = await noteQuery;
-        const notes = (savedNotes.length > 0 ? savedNotes : [{
-          id: -1 as any,
-          author: "AI Engine",
-          role: "Perviewsis AI",
-          avatar: "AI",
-          content: `Analysis complete: ${dbInc.rootCause ?? "Root cause identification in progress. AI is correlating signals across affected services."}`,
-          tags: ["AI Summary", "Root Cause"],
-          createdAt: new Date(startMs + 180000),
-        } as any]).map((n: any) => ({
+        const notes = savedNotes.map((n: any) => ({
           id: String(n.id),
           author: n.author,
           role: n.role,
@@ -6495,108 +6665,292 @@ export async function registerRoutes(
           }))
           .filter((e) => typeof e.at === "number" && Number.isFinite(e.at))
           .slice(0, 3) as Array<{ at: number; event: string; detail: string; type: string; icon: string }>;
-        const timeline = [...timelineBase, ...alertTimeline, ...errorTimeline,
-          { at: startMs + 3 * 60 * 1000, event: "AI root cause hypothesis generated", detail: `Root cause identified with ${confidence}% confidence.`, type: "ai", icon: "brain" },
-          ...(dbInc.status === "Resolved" && endMs ? [{ at: endMs, event: "Incident resolved", detail: `MTTR: ${dbInc.mttr ? `${Math.floor(dbInc.mttr / 60)}m` : `${Math.floor(((endMs) - startMs) / 60000)}m`}`, type: "resolved", icon: "resolved" }] : []),
-        ].sort((a, b) => a.at - b.at).slice(0, 14);
-        const txFromDb = txRows
-          .map((t, i) => {
-            const resp = Number(t.avgResponseTime ?? 0);
-            const cpm = Number(t.callsPerMinute ?? 0);
-            const err = Number(t.errorRate ?? 0);
+        const aiTimeline = asList(ollamaIncident?.timeline)
+          .map((ev: any, i: number) => {
+            const at = Date.parse(asText(ev?.timestamp));
+            if (!Number.isFinite(at)) return null;
             return {
-              id: String(t.externalId ?? t.id ?? `tx-${i + 1}`),
-              name: String(t.name ?? `Transaction ${i + 1}`),
-              throughputDrop: Math.max(3, Math.min(90, Math.round((err * 8) + (resp / 180) + 8))),
-              errorSpike: Math.max(0.2, Number((err > 0 ? err : 0.2).toFixed(2))),
-              slaBreach: resp >= 2000 || err >= 3,
-              avgResponseTime: Math.max(50, Math.round(resp || 600)),
-              _cpm: cpm,
+              at,
+              event: asText(ev?.event, `AI timeline event ${i + 1}`),
+              detail: asText(ev?.detail, asText(ev?.event, "Model-correlated timeline event.")),
+              type: i === 0 ? "detection" : "ai",
+              icon: "brain",
             };
           })
-          .sort((a, b) => (b.errorSpike * 20 + b.avgResponseTime / 70 + b._cpm / 40) - (a.errorSpike * 20 + a.avgResponseTime / 70 + a._cpm / 40))
+          .filter((ev: any): ev is { at: number; event: string; detail: string; type: string; icon: string } => ev != null)
+          .slice(0, 10);
+        const timelineSignals = aiTimeline.length > 0 ? aiTimeline : [...timelineBase, ...alertTimeline, ...errorTimeline];
+        const timeline = [...timelineSignals,
+          { at: startMs + 3 * 60 * 1000, event: "AI root cause hypothesis generated", detail: `Root cause identified with ${confidence}% confidence.`, type: "ai", icon: "brain" },
+          ...(dbInc.status === "Resolved" && endMs ? [{ at: endMs, event: "Incident resolved", detail: `MTTR: ${(dbInc as any).mttr ? `${Math.floor((dbInc as any).mttr / 60)}m` : `${Math.floor(((endMs) - startMs) / 60000)}m`}`, type: "resolved", icon: "resolved" }] : []),
+        ].sort((a, b) => a.at - b.at).slice(0, 14);
+        const aiTxSignals = [
+          ...asList(ollamaIncident?.related_business_transactions),
+          ...asList(ollamaIncident?.drilldown_context?.business_transactions),
+        ];
+        const txRefs = collectSignalRefs(aiTxSignals);
+        for (const err of relatedErrors) {
+          const md = (err.metadata ?? {}) as any;
+          for (const entity of asList(md?.affectedEntities)) {
+            if (String(entity?.entityType ?? "").toUpperCase().includes("BUSINESS_TRANSACTION")) {
+              [entity?.entityId, entity?.name].forEach((value) => {
+                const ref = String(value ?? "").trim().toLowerCase();
+                if (ref) txRefs.add(ref);
+              });
+            }
+          }
+        }
+        const hasTxRefs = txRefs.size > 0;
+        const txSourceRows = uniqueBy(
+          (hasTxRefs
+            ? txRows.filter((t) => signalMatchesRefs(t, txRefs, ["id", "externalId", "name"]))
+            : txRows.filter((t) => toFinite(t.avgResponseTime) >= 1600 || toFinite(t.errorRate) >= 1.5 || toFinite(t.callsPerMinute) > 0)
+          ),
+          (t: any) => String(t.externalId ?? t.id ?? t.name ?? ""),
+        )
+          .sort((a, b) => {
+            const aScore = toFinite(a.errorRate) * 20 + toFinite(a.avgResponseTime) / 70 + toFinite(a.callsPerMinute) / 40;
+            const bScore = toFinite(b.errorRate) * 20 + toFinite(b.avgResponseTime) / 70 + toFinite(b.callsPerMinute) / 40;
+            return bScore - aScore;
+          })
           .slice(0, 8);
-        const affectedTransactions = txFromDb.length > 0
-          ? txFromDb.map(({ _cpm, ...rest }) => rest)
-          : services.slice(0, 2).map((svc, i) => ({
-              id: `tx-${i + 1}`, name: svc,
-              throughputDrop: sev === "Critical" ? 52 : 22,
-              errorSpike: sev === "Critical" ? 5.2 : 1.8,
-              slaBreach: sev === "Critical",
-              avgResponseTime: sev === "Critical" ? 4500 : 1800,
-            }));
-        const traces = txFromDb.slice(0, 10).map((tx, i) => ({
-          traceId: `TR-${dbInc.externalId}-${i + 1}`,
-          name: tx.name,
-          txId: tx.id,
-          duration: Math.max(120, Math.round(tx.avgResponseTime * (1.4 + (i % 3) * 0.25))),
-          spanCount: Math.max(3, Math.round((tx._cpm || 10) / 2) + 4),
-          slowestSpan: i % 2 === 0 ? "DB query execution" : "Downstream API call",
+        const txForImpact = txSourceRows.length > 0 ? txSourceRows : txRows.slice(0, 8);
+        const affectedTransactions = txSourceRows.map((t) => {
+          const resp = toFinite(t.avgResponseTime);
+          const cpm = toFinite(t.callsPerMinute);
+          const err = toFinite(t.errorRate);
+          return {
+            id: String(t.externalId ?? t.id),
+            name: String(t.name ?? "Business Transaction"),
+            throughputDrop: Math.max(0, Math.min(90, Math.round((err * 8) + (resp / 180) + (cpm > 0 ? 4 : 0)))),
+            errorSpike: Number(err.toFixed(2)),
+            slaBreach: resp >= 2000 || err >= 3,
+            avgResponseTime: Math.max(0, Math.round(resp)),
+          };
+        });
+        const traces = uniqueBy(
+          relatedErrors
+            .map((e, i) => {
+              const md = (e.metadata ?? {}) as any;
+              const traceId = asText(md.requestGUID ?? md.requestGuid ?? md.traceId ?? md.traceID);
+              if (!traceId) return null;
+              const duration = toFinite(md.timeTakenInMilliSecs ?? md.durationMs ?? md.duration);
+              return {
+                traceId,
+                name: asText(md.URL ?? md.requestPath ?? md.businessTransactionName ?? e.service ?? e.errorType, "Request snapshot"),
+                txId: asText(md.businessTransactionId),
+                duration: Math.max(0, Math.round(duration)),
+                spanCount: Math.max(1, asList(md.transactionEvents).length || asList(md.stackTraces).length || 1),
+                slowestSpan: asText(asList(md.transactionEvents)[0]?.summary ?? asList(md.stackTraces)[0]?.className ?? e.errorType, "Captured request snapshot"),
+                _order: i,
+              };
+            })
+            .filter((t): t is { traceId: string; name: string; txId: string; duration: number; spanCount: number; slowestSpan: string; _order: number } => t != null),
+          (t) => t.traceId,
+        )
+          .sort((a, b) => (b.duration - a.duration) || (a._order - b._order))
+          .slice(0, 10)
+          .map(({ _order, ...trace }) => trace);
+        const metricSignals = [
+          ...asList(ollamaIncident?.related_metrics),
+          ...asList(ollamaIncident?.drilldown_context?.server_metrics),
+          ...asList(ollamaIncident?.drilldown_context?.application_metrics),
+        ];
+        const metricSeries = (patterns: RegExp[]) => metricSignals
+          .map((m, i) => {
+            const label = asText(m?.metricName ?? m?.name ?? m?.title ?? m?.metric);
+            if (!patterns.some((p) => p.test(label))) return null;
+            const value = toFinite(m?.value ?? m?.currentValue ?? m?.avgResponseTime ?? m?.errorRate, NaN);
+            if (!Number.isFinite(value)) return null;
+            const parsedTs = Date.parse(asText(m?.timestamp ?? m?.recordedAt ?? m?.startTime ?? m?.triggeredAt));
+            return {
+              timestamp: Number.isFinite(parsedTs) ? parsedTs : startMs + i * 60_000,
+              value,
+              anomaly: true,
+            };
+          })
+          .filter((point): point is { timestamp: number; value: number; anomaly: boolean } => point != null)
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .slice(0, 30);
+        const aiActionTexts = asList(ollamaIncident?.recommended_actions)
+          .map((action: any) => asText(action))
+          .filter(Boolean)
+          .slice(0, 8);
+        const topAlert = relatedAlerts[0];
+        const topError = relatedErrors[0];
+        const topTx = txSourceRows[0];
+        const appErrorRate = toFinite(app?.errorRate ?? txErrMax);
+        const fallbackActions = [
+          topError ? `Investigate ${topError.errorType ?? "error signal"} on ${topError.service ?? app?.name ?? "the affected service"}` : "",
+          topAlert ? `Review alert ${topAlert.name} and confirm whether it is still active` : "",
+          topTx ? `Inspect business transaction ${topTx.name} for latency or error contribution` : "",
+          serverRows.some((s) => String(s.status ?? "").toLowerCase() !== "healthy")
+            ? "Review non-healthy servers linked to the incident application"
+            : "",
+        ].filter(Boolean);
+        const recommendations = (aiActionTexts.length > 0 ? aiActionTexts : fallbackActions).map((action, i) => ({
+          id: `rec-${dbInc.externalId}-${i + 1}`,
+          priority: i === 0 && (sev === "Critical" || sev === "High") ? "High" : "Medium",
+          category: /cpu|memory|disk|host|server|node|infra/i.test(action) ? "Infra" : /transaction|service|api|endpoint/i.test(action) ? "Service" : "App",
+          confidence,
+          title: action,
+          description: action,
+          rule: ollamaIncident ? "Generated by Ollama incident correlation" : "Generated from correlated incident telemetry",
+          effort: i === 0 ? "Medium" : "Low",
+          impactReduction: Math.max(25, Math.min(80, confidence - i * 6)),
+          nextSteps: [action],
         }));
+        const cleanServiceNames = uniqueBy([
+          ...asList(ollamaIncident?.impacted_services).map((s: any) => asText(s)),
+          ...relatedErrors.map((e) => asText(e.service ?? e.applicationName)),
+          ...services,
+          app?.name ?? "",
+        ]
+          .map((name) => String(name ?? "").trim())
+          .filter((name) => name && !/^\d+$/.test(name) && name !== dbIncAppId && name !== String(app?.id ?? "")),
+          (name) => name.toLowerCase(),
+        ).slice(0, 8);
+        const affectedServicesDetail = cleanServiceNames.map((svc, i) => {
+          const svcErrors = relatedErrors
+            .filter((e) => {
+              const haystack = `${e.service ?? ""} ${e.applicationName ?? ""} ${e.message ?? ""}`.toLowerCase();
+              return haystack.includes(svc.toLowerCase()) || svc.toLowerCase().includes(String(e.service ?? "").toLowerCase());
+            })
+            .slice(0, 2);
+          const svcErrorCount = svcErrors.reduce((sum, e) => sum + Math.max(1, toFinite(e.frequency, 1)), 0);
+          return {
+            name: svc,
+            tier: asText(svcErrors[0]?.service, app?.name ?? "Application"),
+            severity: svcErrors.some((e) => String(e.severity ?? "").toLowerCase() === "critical") ? "Critical" : (i === 0 ? sev : "Warning"),
+            errors: svcErrors.map((e) => asText(e.message, e.errorType ?? "Correlated error")),
+            errorRateDelta: Math.max(0, Math.round(appErrorRate || Math.min(100, svcErrorCount))),
+          };
+        });
+        const serverRefs = collectSignalRefs([
+          ...asList(ollamaIncident?.impacted_servers),
+          ...asList(ollamaIncident?.drilldown_context?.server_metrics),
+        ]);
+        const affectedServerRows = uniqueBy(
+          (serverRefs.size > 0
+            ? serverRows.filter((s) => signalMatchesRefs(s, serverRefs, ["id", "externalId", "name"]))
+            : serverRows.filter((s) => String(s.status ?? "").toLowerCase() !== "healthy")
+          ),
+          (server: any) => String(server.externalId ?? server.id ?? server.name ?? ""),
+        ).slice(0, 8);
+        const affectedServersDetail = affectedServerRows.map((server) => {
+          const cpu = toFinite(server.cpuUsage, NaN);
+          const memory = toFinite(server.memoryUsage, NaN);
+          const disk = toFinite(server.diskUsage, NaN);
+          const problems = [
+            Number.isFinite(cpu) ? `CPU ${Math.round(cpu)}%` : "",
+            Number.isFinite(memory) ? `Memory ${Math.round(memory)}%` : "",
+            Number.isFinite(disk) ? `Disk ${Math.round(disk)}%` : "",
+            server.status ? `Status ${server.status}` : "",
+          ].filter(Boolean);
+          return {
+            id: String(server.id),
+            name: String(server.name ?? server.externalId ?? server.id),
+            severity: String(server.status ?? "").toLowerCase() === "critical" ? "Critical" : sev,
+            status: server.status ?? "Impacted",
+            problems,
+          };
+        });
+        const txMetricPoints = txSourceRows
+          .map((t, i) => ({
+            timestamp: t.updatedAt?.getTime?.() ?? startMs + i * 60_000,
+            responseTime: toFinite(t.avgResponseTime, NaN),
+            errorRate: toFinite(t.errorRate, NaN),
+            throughput: toFinite(t.callsPerMinute, NaN),
+          }))
+          .filter((point) => Number.isFinite(point.responseTime) || Number.isFinite(point.errorRate) || Number.isFinite(point.throughput));
+        const evidenceMetrics = {
+          cpu: metricSeries([/cpu/i]),
+          memory: metricSeries([/memory|mem/i]),
+          errorRate: metricSeries([/error/i]).concat(txMetricPoints.filter((p) => Number.isFinite(p.errorRate)).map((p) => ({ timestamp: p.timestamp, value: p.errorRate, anomaly: p.errorRate > 0 }))).slice(0, 30),
+          responseTime: metricSeries([/response|latency/i]).concat(txMetricPoints.filter((p) => Number.isFinite(p.responseTime)).map((p) => ({ timestamp: p.timestamp, value: p.responseTime, anomaly: p.responseTime >= 1600 }))).slice(0, 30),
+          throughput: metricSeries([/throughput|calls/i]).concat(txMetricPoints.filter((p) => Number.isFinite(p.throughput)).map((p) => ({ timestamp: p.timestamp, value: p.throughput, anomaly: false }))).slice(0, 30),
+        };
+        const causalChains = [
+          topAlert ? {
+            step: 1,
+            label: "Alert Signal",
+            value: asText(topAlert.name, "Related alert"),
+            delta: asText(topAlert.severity, "Observed"),
+            type: "incident",
+          } : null,
+          topError ? {
+            step: 2,
+            label: "Error Evidence",
+            value: asText(topError.errorType, "Application error"),
+            delta: `${Math.max(1, toFinite(topError.frequency, 1)).toLocaleString()} occurrence(s)`,
+            type: "service",
+          } : null,
+          topTx ? {
+            step: 3,
+            label: "Business Transaction",
+            value: asText(topTx.name, "Affected transaction"),
+            delta: `${Math.round(toFinite(topTx.avgResponseTime))}ms avg`,
+            type: "app",
+          } : null,
+          affectedServerRows[0] ? {
+            step: 4,
+            label: "Infrastructure",
+            value: String(affectedServerRows[0].name ?? affectedServerRows[0].externalId ?? "Affected server"),
+            delta: String(affectedServerRows[0].status ?? "Observed"),
+            type: "cpu",
+          } : null,
+        ].filter((chain): chain is { step: number; label: string; value: string; delta: string; type: string } => chain != null)
+          .map((chain, i) => ({ ...chain, step: i + 1 }));
+        const impactedCpm = txForImpact.reduce((sum, t) => sum + Math.max(0, toFinite(t.callsPerMinute)), 0);
+        const dynamicAffectedUsers = Math.max(0, Math.round((impactedCpm * durationMins * 0.25) + Math.min(5000, errorVolume * 2)));
+        const dynamicRevenueLoss = Math.round(dynamicAffectedUsers * (sev === "Critical" ? 4.4 : 1.8));
+        const dynamicBusinessImpact = Math.max(0, Math.min(98, Math.round((confidence * 0.55) + (criticalAlerts * 8) + Math.min(30, errorVolume / 8) + (affectedTransactions.length * 4))));
         return res.json({
           incidentId: dbInc.externalId,
           applicationId: app?.id ?? null,
           title: dbInc.title,
+          summary: asText(ollamaIncident?.summary, dbInc.rootCause ?? dbInc.title),
+          probableRootCause: asText(ollamaIncident?.probable_root_cause, dbInc.rootCause ?? "Root cause analysis in progress."),
+          impactAnalysis: asText(ollamaIncident?.impact_analysis, "Review correlated alerts, errors, server metrics, and business transactions for impact."),
+          drilldownContext: ollamaIncident?.drilldown_context ?? null,
+          incidentTimeline: asList(ollamaIncident?.timeline),
           status: dbInc.status,
           severity: sev,
           startTime: startMs,
           endTime: endMs,
           duration: `${Math.floor(durationMins / 60)}h ${durationMins % 60}m`,
           confidenceScore: confidence,
-          businessImpactScore: sev === "Critical" ? 87 : 52,
-          estimatedRevenueLoss: sev === "Critical" ? 18500 : 4200,
-          affectedUsers: sev === "Critical" ? 4200 : 800,
-          affectedApplications: app ? [{ id: app.id, name: app.name, status: sev, errorRateSpike: sev === "Critical" ? 5.2 : 1.8 }] : [],
-          affectedServices: services.map((svc, i) => ({
-            name: svc,
-            tier: i === 0 ? "Frontend" : "Backend",
-            severity: i === 0 ? sev : "Warning",
-            errors: ["500 Internal Server Error", "503 Service Unavailable"].slice(0, Math.min(i + 1, 2)),
-            errorRateDelta: i === 0 ? 48 : 12,
-          })),
-          affectedServers: [],
+          businessImpactScore: dynamicBusinessImpact,
+          estimatedRevenueLoss: dynamicRevenueLoss,
+          affectedUsers: dynamicAffectedUsers,
+          affectedApplications: app ? [{
+            id: app.id,
+            name: app.name,
+            status: app.status ?? sev,
+            errorRateSpike: Number(appErrorRate.toFixed(2)),
+          }] : [],
+          affectedServices: affectedServicesDetail,
+          affectedServers: affectedServersDetail,
           rootCause: {
-            hypothesis: dbInc.rootCause ?? "Root cause analysis in progress. Review recent deployments and resource metrics.",
+            hypothesis: asText(ollamaIncident?.probable_root_cause, dbInc.rootCause ?? "Root cause analysis in progress. Review recent deployments and resource metrics."),
             confidence,
-            causalChains: [
-              { step: 1, label: "Service Degradation", value: "Elevated latency", delta: "+180%", type: "service" },
-              { step: 2, label: "Error Rate Spike", value: sev === "Critical" ? "5.2%" : "1.8%", delta: sev === "Critical" ? "+4.8%" : "+1.4%", type: "incident" },
-              { step: 3, label: "User Impact", value: sev === "Critical" ? "4,200 users" : "800 users", delta: "Significant", type: "app" },
-            ],
+            causalChains,
           },
-          metrics: {
-            cpu: Array.from({ length: 30 }).map((_, i) => ({ timestamp: startMs - (29 - i) * 300000, value: i < 15 ? 30 + Math.random() * 20 : 65 + Math.random() * 25, anomaly: i >= 18 })),
-            memory: Array.from({ length: 30 }).map((_, i) => ({ timestamp: startMs - (29 - i) * 300000, value: 45 + i * 1.5 + Math.random() * 8, anomaly: i >= 22 })),
-            errorRate: Array.from({ length: 30 }).map((_, i) => ({ timestamp: startMs - (29 - i) * 300000, value: i < 15 ? 0.3 + Math.random() * 0.3 : 2 + Math.random() * 3, anomaly: i >= 15 })),
-            responseTime: Array.from({ length: 30 }).map((_, i) => ({ timestamp: startMs - (29 - i) * 300000, value: i < 15 ? 280 + Math.random() * 80 : 1200 + Math.random() * 2000, anomaly: i >= 15 })),
-            throughput: Array.from({ length: 30 }).map((_, i) => ({ timestamp: startMs - (29 - i) * 300000, value: i < 22 ? 900 + Math.random() * 300 : 450 + Math.random() * 150, anomaly: i >= 22 })),
-          },
+          metrics: evidenceMetrics,
           affectedTransactions,
           traces,
           timeline,
+          recommendations,
           notes,
-          autoRemediation: {
-            available: sev === "Critical",
-            status: "Ready",
-            script: "scale-affected-service.yml",
-            type: "Ansible + Terraform",
-            preview: `kubectl scale deploy/${services[0]?.toLowerCase().replace(/\s+/g, '-') ?? "service"}-deployment --replicas=6\nterraform apply -var 'service_replicas=6'`,
-            estimatedImpactReduction: sev === "Critical" ? 72 : 45,
-            history: [],
-          },
+          autoRemediation: null,
           relatedAlerts: relatedAlerts.map(a => ({
             alertId: `ALT-${a.id}`, severity: a.severity, status: a.status,
             rule: a.name, timestamp: a.triggeredAt?.getTime() ?? Date.now(),
           })),
           aiInsight: {
-            summary: dbInc.rootCause ?? "AI analysis is examining patterns across correlated signals.",
+            summary: asText(ollamaIncident?.summary, dbInc.rootCause ?? "AI analysis is examining patterns across correlated signals."),
             confidence,
-            recommendations: [
-              "Review recent deployments and configuration changes",
-              "Check resource utilization trends on affected nodes",
-              "Examine correlated error clusters for shared root cause",
-              "Consider scaling affected services if resource bound",
-            ],
+            recommendations: recommendations.map((rec) => rec.title),
           },
           aiCorrelation: {
             summary: `${dbInc.title}: AI correlation identifies this as ${sev === "Critical" ? "a high-impact cascading failure" : "a service degradation event"} requiring immediate attention.`,
@@ -7001,6 +7355,7 @@ export async function registerRoutes(
     const out = Array.from(buckets.entries())
       .map(([name, count]) => ({
         name,
+        count,
         type: name.toLowerCase().includes("db") ? "Database" : "Service",
         status: count > 20 ? "Degraded" : "Healthy",
         errorRate: Number((count / Math.max(1, errors.length)).toFixed(2)),
@@ -7443,7 +7798,7 @@ export async function registerRoutes(
 
   // Test a saved credential by ID (reads real password from DB)
   app.post("/api/apm/credentials/:id/test", requireAuth, async (req, res) => {
-    const credId = parseInt(req.params.id);
+    const credId = parseInt(String(req.params.id), 10);
     if (isNaN(credId)) return res.status(400).json({ ok: false, message: "Invalid credential ID" });
     try {
       const { user, orgData } = await scopedCredsForUser(req, true);
@@ -7564,7 +7919,7 @@ export async function registerRoutes(
   // Delete credential
   app.delete("/api/apm/credentials/:id", requireAuth, async (req, res) => {
     try {
-      const credId = parseInt(req.params.id);
+      const credId = parseInt(String(req.params.id), 10);
       if (!Number.isFinite(credId)) return res.status(400).json({ error: "Invalid credential ID" });
       const { user, orgData } = await scopedCredsForUser(req, true);
       if (!user || !orgData) return res.status(401).json({ error: "Not authenticated" });
@@ -7689,13 +8044,14 @@ export async function registerRoutes(
       const [membership] = await db.select().from(organizationMembers).where(eq(organizationMembers.userId, user.id));
       if (!membership) return res.status(403).json({ error: "No organization membership" });
 
-      const filePath = getSyncRunFilePath(membership.organizationId, req.params.syncRunId, user.id);
+      const syncRunId = String(req.params.syncRunId);
+      const filePath = getSyncRunFilePath(membership.organizationId, syncRunId, user.id);
       if (!filePath) return res.status(404).json({ error: "Sync run not found" });
 
       res.setHeader("Content-Type", "application/json");
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="sync-run-${req.params.syncRunId}.json"`
+        `attachment; filename="sync-run-${syncRunId}.json"`
       );
       fs.createReadStream(filePath).pipe(res);
     } catch (err: any) {

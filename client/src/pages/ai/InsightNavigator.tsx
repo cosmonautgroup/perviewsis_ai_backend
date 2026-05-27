@@ -45,6 +45,7 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  processingStatus?: string;
   structured?: StructuredData | null;
 }
 
@@ -67,6 +68,13 @@ const QUICK_PROMPTS = [
 ];
 
 const STREAM_IDLE_TIMEOUT_MS = 120000;
+const PROCESSING_STEPS = [
+  "Fetching observability data...",
+  "Normalizing telemetry context...",
+  "Asking Ollama to reason over signals...",
+  "Thinking...",
+  "Preparing response...",
+];
 
 function SeverityBadge({ severity }: { severity: string }) {
   return (
@@ -74,6 +82,55 @@ function SeverityBadge({ severity }: { severity: string }) {
       {severity}
     </Badge>
   );
+}
+
+function ProcessingIndicator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground min-h-[1.5rem]" data-testid="ai-processing-indicator">
+      <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin flex-shrink-0" />
+      <span className="text-foreground/90">{label}</span>
+      <span className="flex items-center gap-0.5" aria-hidden="true">
+        <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse" />
+        <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse [animation-delay:120ms]" />
+        <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse [animation-delay:240ms]" />
+      </span>
+    </div>
+  );
+}
+
+function decodeJsonStringValue(value: string): string {
+  try {
+    return JSON.parse(`"${value.replace(/\n/g, "\\n")}"`);
+  } catch {
+    return value
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function extractAnswerTextFromJsonLike(rawText: string): string | null {
+  const trimmed = rawText.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed.answerText === "string" && parsed.answerText.trim()) {
+      return parsed.answerText.trim();
+    }
+  } catch {
+    // Keep going; some model responses are JSON-like but not valid JSON.
+  }
+
+  const match = trimmed.match(/"answerText"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (!match?.[1]) return null;
+  const decoded = decodeJsonStringValue(match[1]).trim();
+  return decoded.length > 0 ? decoded : null;
+}
+
+function displayAssistantContent(content: string, structured?: StructuredData | null): string {
+  const candidate = structured?.answerText?.trim() || content;
+  return extractAnswerTextFromJsonLike(candidate) ?? candidate;
 }
 
 // ─── Structured data panel ────────────────────────────────────────────────────
@@ -172,6 +229,8 @@ function StructuredPanel({ data }: { data: StructuredData }) {
 
 function MessageBubble({ msg, onCopy }: { msg: ChatMessage; onCopy: (text: string) => void }) {
   const isUser = msg.role === "user";
+  const displayContent = isUser ? msg.content : displayAssistantContent(msg.content, msg.structured);
+  const hasContent = displayContent.trim().length > 0;
 
   const renderContent = (text: string) => {
     const lines = text.split("\n");
@@ -196,7 +255,7 @@ function MessageBubble({ msg, onCopy }: { msg: ChatMessage; onCopy: (text: strin
     return (
       <div className="flex justify-end" data-testid={`message-user-${msg.id}`}>
         <div className="max-w-[75%] bg-indigo-600 text-white rounded-2xl rounded-tr-md px-4 py-3 text-sm leading-relaxed">
-          {msg.content}
+          {displayContent}
         </div>
         <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center ml-2 flex-shrink-0 self-end">
           <User className="w-4 h-4 text-indigo-400" />
@@ -213,9 +272,15 @@ function MessageBubble({ msg, onCopy }: { msg: ChatMessage; onCopy: (text: strin
       <div className="flex-1 min-w-0">
         <div className="bg-card border border-border rounded-2xl rounded-tl-md px-4 py-3">
           <div className="text-sm text-foreground leading-relaxed">
-            {renderContent(msg.content)}
-            {msg.streaming && (
-              <span className="inline-block w-1.5 h-4 bg-indigo-400 ml-0.5 animate-pulse rounded-sm" />
+            {msg.streaming && !hasContent ? (
+              <ProcessingIndicator label={msg.processingStatus ?? "Thinking..."} />
+            ) : (
+              <>
+                {renderContent(displayContent)}
+                {msg.streaming && (
+                  <span className="inline-block w-1.5 h-4 bg-indigo-400 ml-0.5 animate-pulse rounded-sm" />
+                )}
+              </>
             )}
           </div>
           {!msg.streaming && msg.structured && (
@@ -225,7 +290,7 @@ function MessageBubble({ msg, onCopy }: { msg: ChatMessage; onCopy: (text: strin
         {!msg.streaming && (
           <div className="flex items-center gap-2 mt-1.5 ml-1">
             <button
-              onClick={() => onCopy(msg.content)}
+              onClick={() => onCopy(displayContent)}
               className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
               data-testid={`copy-message-${msg.id}`}
             >
@@ -363,7 +428,7 @@ export default function InsightNavigator() {
     setMessages(prev => [
       ...prev,
       { id: userMsgId, role: "user", content: trimmed },
-      { id: assistantMsgId, role: "assistant", content: "", streaming: true, structured: null },
+      { id: assistantMsgId, role: "assistant", content: "", streaming: true, processingStatus: PROCESSING_STEPS[0], structured: null },
     ]);
     setInput("");
     setIsStreaming(true);
@@ -371,7 +436,27 @@ export default function InsightNavigator() {
     const abort = new AbortController();
     abortRef.current = abort;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let processingTimer: ReturnType<typeof setInterval> | null = null;
+    let processingStepIndex = 0;
     let abortedByIdleTimeout = false;
+    const setAssistantProcessingStatus = (status: string) => {
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMsgId && m.streaming && !m.content.trim()
+          ? { ...m, processingStatus: status }
+          : m,
+      ));
+    };
+    const stopProcessingTicker = () => {
+      if (processingTimer) clearInterval(processingTimer);
+      processingTimer = null;
+    };
+    const startProcessingTicker = () => {
+      setAssistantProcessingStatus(PROCESSING_STEPS[processingStepIndex]);
+      processingTimer = setInterval(() => {
+        processingStepIndex = (processingStepIndex + 1) % PROCESSING_STEPS.length;
+        setAssistantProcessingStatus(PROCESSING_STEPS[processingStepIndex]);
+      }, 3500);
+    };
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -381,6 +466,7 @@ export default function InsightNavigator() {
     };
 
     try {
+      startProcessingTicker();
       resetIdleTimer();
       const response = await fetch(`/api/insight-navigator/sessions/${sessionId}/messages`, {
         method: "POST",
@@ -410,27 +496,37 @@ export default function InsightNavigator() {
       let buffer = "";
       let completed = false;
       const applySseEvent = (event: any) => {
-        if (event.type === "token") {
+        if (event.type === "status") {
+          if (typeof event.message === "string" && event.message.trim()) {
+            setAssistantProcessingStatus(event.message.trim());
+          }
+        } else if (event.type === "token") {
           accumulated += event.text;
+          if (event.text) stopProcessingTicker();
           setMessages(prev => prev.map(m =>
-            m.id === assistantMsgId ? { ...m, content: accumulated } : m,
+            m.id === assistantMsgId ? { ...m, content: accumulated, processingStatus: undefined } : m,
           ));
         } else if (event.type === "done") {
+          stopProcessingTicker();
           const structured: StructuredData = event.data;
+          const answerText = displayAssistantContent(structured.answerText ?? accumulated, structured);
+          const cleanStructured = { ...structured, answerText };
           setMessages(prev => prev.map(m =>
             m.id === assistantMsgId ? {
               ...m,
-              content: structured.answerText ?? accumulated,
+              content: answerText,
               streaming: false,
-              structured,
+              processingStatus: undefined,
+              structured: cleanStructured,
             } : m,
           ));
           completed = true;
           qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions"] });
           qc.invalidateQueries({ queryKey: ["/api/insight-navigator/sessions", sessionId, "messages"] });
         } else if (event.type === "error") {
+          stopProcessingTicker();
           setMessages(prev => prev.map(m =>
-            m.id === assistantMsgId ? { ...m, content: event.message, streaming: false, structured: null } : m,
+            m.id === assistantMsgId ? { ...m, content: event.message, streaming: false, processingStatus: undefined, structured: null } : m,
           ));
           completed = true;
         }
@@ -464,24 +560,31 @@ export default function InsightNavigator() {
       }
 
       if (!completed) {
+        stopProcessingTicker();
         setMessages(prev => prev.map(m =>
-          m.id === assistantMsgId ? { ...m, content: accumulated || "No response received", streaming: false } : m,
+          m.id === assistantMsgId ? { ...m, content: accumulated || "No response received", streaming: false, processingStatus: undefined } : m,
         ));
       }
     } catch (err: any) {
+      stopProcessingTicker();
       if (err.name === "AbortError" && abortedByIdleTimeout) {
         setMessages(prev => prev.map(m =>
           m.id === assistantMsgId
-            ? { ...m, content: "AI response timed out. Please verify Ollama is running and the model is available.", streaming: false }
+            ? { ...m, content: "AI response timed out. Please verify Ollama is running and the model is available.", streaming: false, processingStatus: undefined }
             : m,
+        ));
+      } else if (err.name === "AbortError") {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMsgId ? { ...m, content: "Request cancelled.", streaming: false, processingStatus: undefined } : m,
         ));
       } else if (err.name !== "AbortError") {
         setMessages(prev => prev.map(m =>
-          m.id === assistantMsgId ? { ...m, content: err.message ?? "Connection error", streaming: false } : m,
+          m.id === assistantMsgId ? { ...m, content: err.message ?? "Connection error", streaming: false, processingStatus: undefined } : m,
         ));
       }
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      stopProcessingTicker();
       setIsStreaming(false);
       abortRef.current = null;
       inputRef.current?.focus();

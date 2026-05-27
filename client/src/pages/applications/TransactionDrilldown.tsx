@@ -21,7 +21,7 @@ import {
 export default function TransactionDrilldown() {
   const { id, txId } = useParams<{ id: string; txId: string }>();
   const appId = parseInt(id || "0", 10);
-  const transactionId = parseInt(txId || "0", 10);
+  const transactionKey = decodeURIComponent(txId || "").trim();
   const initialSearch = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const initialDuration = Number(initialSearch.get("durationMins") ?? NaN);
   const initialStartIso = initialSearch.get("start") ?? "";
@@ -66,38 +66,40 @@ export default function TransactionDrilldown() {
 
   const { data: app, isLoading: appLoading } = useApplication(appId);
   const { data: tx, isLoading: txLoading } = useQuery<any>({
-    queryKey: ["/api/applications/transaction-detail", appId, transactionId, metricOpts.durationMins, metricOpts.start, metricOpts.end],
+    queryKey: ["/api/applications/transaction-detail", appId, transactionKey, metricOpts.durationMins, metricOpts.start, metricOpts.end],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricOpts.durationMins) params.set("durationMins", String(metricOpts.durationMins));
       if (metricOpts.start) params.set("start", metricOpts.start);
       if (metricOpts.end) params.set("end", metricOpts.end);
       const qs = params.toString();
+      const encodedTx = encodeURIComponent(transactionKey);
       const url = qs
-        ? `/api/applications/${appId}/transactions/${transactionId}?${qs}`
-        : `/api/applications/${appId}/transactions/${transactionId}`;
+        ? `/api/applications/${appId}/transactions/${encodedTx}?${qs}`
+        : `/api/applications/${appId}/transactions/${encodedTx}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch transaction details");
       return res.json();
     },
-    enabled: !!appId && !!transactionId,
+    enabled: !!appId && !!transactionKey,
   });
   const { data: diagnostics, isLoading: diagnosticsLoading } = useQuery<any>({
-    queryKey: ["/api/applications/transaction-diagnostics", appId, transactionId, metricOpts.durationMins, metricOpts.start, metricOpts.end],
+    queryKey: ["/api/applications/transaction-diagnostics", appId, transactionKey, metricOpts.durationMins, metricOpts.start, metricOpts.end],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricOpts.durationMins) params.set("durationMins", String(metricOpts.durationMins));
       if (metricOpts.start) params.set("start", metricOpts.start);
       if (metricOpts.end) params.set("end", metricOpts.end);
       const qs = params.toString();
+      const encodedTx = encodeURIComponent(transactionKey);
       const url = qs
-        ? `/api/applications/${appId}/transactions/${transactionId}/diagnostics?${qs}`
-        : `/api/applications/${appId}/transactions/${transactionId}/diagnostics`;
+        ? `/api/applications/${appId}/transactions/${encodedTx}/diagnostics?${qs}`
+        : `/api/applications/${appId}/transactions/${encodedTx}/diagnostics`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch transaction diagnostics");
       return res.json();
     },
-    enabled: !!appId && !!transactionId,
+    enabled: !!appId && !!transactionKey,
   });
 
   if (appLoading || txLoading) {
@@ -220,15 +222,21 @@ export default function TransactionDrilldown() {
           <Card className="border border-border shadow-sm">
             <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Current BT Snapshot</CardTitle></CardHeader>
             <CardContent className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={snapshotChart} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis dataKey="key" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip formatter={(v: number | string) => [Number(v), "Value"]} />
-                  <Bar dataKey="value" fill="#22c55e" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {hasMetricData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={snapshotChart} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                    <XAxis dataKey="key" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                    <Tooltip formatter={(v: number | string) => [Number(v), "Value"]} />
+                    <Bar dataKey="value" fill="#22c55e" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                  No transaction metric data in this window.
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -256,6 +264,7 @@ export default function TransactionDrilldown() {
               {diagnosticsLoading ? (
                 <Skeleton className="h-full w-full" />
               ) : (
+                diagSeries.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={diagSeries} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
@@ -265,6 +274,11 @@ export default function TransactionDrilldown() {
                     <Bar dataKey="value" fill={diagView === "error" ? "#f97316" : diagView === "slow" ? "#eab308" : "#ef4444"} radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    No {diagLabel.toLowerCase()} samples in this window.
+                  </div>
+                )
               )}
             </div>
             <div className="rounded-lg border border-border overflow-hidden">

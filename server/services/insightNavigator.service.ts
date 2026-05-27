@@ -269,6 +269,7 @@ ${context}
 ${memSection}
 RESPONSE RULES:
 - Always respond with a single valid JSON object (no markdown, no code blocks, no text outside the JSON).
+- The JSON is only a transport format. The user will see answerText, so answerText must be natural, human-readable prose or bullets. Never put raw JSON inside answerText.
 - Answer the user's exact query using the database context. If query-specific matches exist, prioritize them over generic summary rows.
 - If the user asks a question that cannot be answered from the database context, say so clearly in answerText and suggest the closest dashboard to inspect.
 - Never expose credentials, API keys, passwords, or internal infrastructure details beyond what's in the context.
@@ -290,6 +291,63 @@ RESPONSE FORMAT (strict JSON, no deviations):
   "inlineMetrics": [{"title": "string", "type": "lineChart|barChart|table", "data": [...]}],
   "dashboardLinks": [{"label": "string", "href": "string"}]
 }`;
+}
+
+function decodeJsonStringValue(value: string): string {
+  try {
+    return JSON.parse(`"${value.replace(/\n/g, "\\n")}"`);
+  } catch {
+    return value
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function extractAnswerTextFromJsonLike(rawText: string): string | null {
+  const trimmed = rawText.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed.answerText === "string" && parsed.answerText.trim()) {
+      return parsed.answerText.trim();
+    }
+  } catch {
+    // Ollama sometimes returns JSON-like output with one invalid nested field.
+  }
+
+  const match = trimmed.match(/"answerText"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (!match?.[1]) return null;
+  const decoded = decodeJsonStringValue(match[1]).trim();
+  return decoded.length > 0 ? decoded : null;
+}
+
+function toHumanReadableAnswer(rawText: string): string {
+  const extracted = extractAnswerTextFromJsonLike(rawText);
+  if (extracted) return extracted;
+
+  const trimmed = rawText.trim();
+  if (/^[{[]/.test(trimmed)) {
+    return "I analyzed the observability data, but the model returned an invalid structured response. Please retry the question or narrow the scope for a cleaner answer.";
+  }
+
+  return trimmed || "No response received.";
+}
+
+function normalizeInsightResponse(rawText: string, emptyStructured: () => any) {
+  const base = emptyStructured();
+  try {
+    const parsed = parseAIJson(rawText);
+    if (parsed && typeof parsed === "object") {
+      const answerText = toHumanReadableAnswer(String(parsed.answerText ?? rawText));
+      return { ...base, ...parsed, answerText };
+    }
+  } catch {
+    // Fall through to answerText extraction so malformed JSON is still readable.
+  }
+
+  return { ...base, answerText: toHumanReadableAnswer(rawText) };
 }
 
 // ─── Streaming chat ───────────────────────────────────────────────────────────
@@ -416,16 +474,6 @@ export async function streamInsightChat(
   history: HistoryEntry[],
   res: Response,
 ): Promise<void> {
-  const context = await buildOrgContext(credIds, orgName, userMessage);
-  const sessionMemory = buildSessionMemory(history);
-  const systemMsg = buildSystemPrompt(orgName, context, sessionMemory);
-
-  const messages = [
-    { role: "system", content: systemMsg },
-    ...history.slice(-10).map(h => ({ role: h.role, content: h.content })),
-    { role: "user", content: userMessage },
-  ];
-
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -449,6 +497,19 @@ export async function streamInsightChat(
 
   let fullText = "";
   try {
+    sendEvent({ type: "status", message: "Fetching observability data..." });
+    const context = await buildOrgContext(credIds, orgName, userMessage);
+    sendEvent({ type: "status", message: "Normalizing telemetry context..." });
+    const sessionMemory = buildSessionMemory(history);
+    const systemMsg = buildSystemPrompt(orgName, context, sessionMemory);
+
+    const messages = [
+      { role: "system", content: systemMsg },
+      ...history.slice(-10).map(h => ({ role: h.role, content: h.content })),
+      { role: "user", content: userMessage },
+    ];
+
+    sendEvent({ type: "status", message: "Asking Ollama to reason over signals..." });
     const stream = await Promise.race([
       ollamaClient.chat({
         model: DEFAULT_MODEL,
@@ -464,6 +525,7 @@ export async function streamInsightChat(
     const iterator = (stream as any)[Symbol.asyncIterator]?.();
     if (!iterator) throw new Error("AI stream iterator unavailable");
 
+    sendEvent({ type: "status", message: "Thinking..." });
     while (true) {
       const nextChunk = await Promise.race([
         iterator.next(),
@@ -475,16 +537,10 @@ export async function streamInsightChat(
       if (nextChunk.done) break;
       const token: string = nextChunk.value?.message?.content ?? "";
       fullText += token;
-      if (token) sendEvent({ type: "token", text: token });
     }
 
-    let structured = { ...emptyStructured(), answerText: fullText };
-    try {
-      const parsed = parseAIJson(fullText);
-      if (parsed.answerText) structured = { ...emptyStructured(), ...parsed };
-    } catch {
-      // Not valid JSON — keep raw text as answerText
-    }
+    sendEvent({ type: "status", message: "Preparing response..." });
+    const structured = normalizeInsightResponse(fullText, emptyStructured);
 
     await db.insert(insightNavMessages).values({
       sessionId,
@@ -500,6 +556,7 @@ export async function streamInsightChat(
       await db.update(insightNavSessions).set({ updatedAt: new Date() }).where(eq(insightNavSessions.id, sessionId));
     }
 
+    if (structured.answerText) sendEvent({ type: "token", text: structured.answerText });
     sendEvent({ type: "done", data: structured });
   } catch (err: any) {
     const rawMessage = String(err?.message ?? "");

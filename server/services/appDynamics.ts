@@ -89,6 +89,13 @@ export interface AppDRequestSnapshot {
   hasDeepDiveData?: boolean;
   userExperience?: string;
   businessTransactionId?: number;
+  businessTransactionName?: string;
+  tierName?: string;
+  applicationComponentName?: string;
+  applicationComponentNodeName?: string;
+  applicationComponentNodeId?: number;
+  nodeName?: string;
+  requestPath?: string;
 }
 
 export class AppDynamicsClient {

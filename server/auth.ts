@@ -353,7 +353,16 @@ export async function acceptInvitation(
 // Augment Express types
 declare global {
   namespace Express {
-    interface User extends import("@shared/schema").User {}
+    interface User {
+      id: import("@shared/schema").User["id"];
+      email: import("@shared/schema").User["email"];
+      passwordHash: import("@shared/schema").User["passwordHash"];
+      name: import("@shared/schema").User["name"];
+      avatarInitials: import("@shared/schema").User["avatarInitials"];
+      isEmailVerified: import("@shared/schema").User["isEmailVerified"];
+      createdAt: import("@shared/schema").User["createdAt"];
+      updatedAt: import("@shared/schema").User["updatedAt"];
+    }
   }
 }
 

@@ -12,8 +12,8 @@ export async function aiChat({
   model: string;
   messages: { role: string; content: string }[];
   options?: Record<string, any>;
-}) {
-  return await ollamaClient.chat({ model, messages, ...options } as any);
+}): Promise<any> {
+  return await ollamaClient.chat({ model, messages, ...options } as any) as any;
 }
 
 export async function aiGenerate({
